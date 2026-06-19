@@ -191,14 +191,23 @@ function minutesToTime(mins) {
   return `${h12}:${String(min).padStart(2, '0')} ${ap}`;
 }
 
-// Style guess used for structural (non-color) tagging — badges, not colors
+// Style guess used for structural (non-color) tagging — badges, not colors.
+// These map to Mangia's actual service-style vocabulary (matches the
+// "Service Style" field on the worksheet header: Buffet, Plated, Family
+// Style, Action Stations, Passed Apps, Cocktail Hour, Bar) rather than a
+// collapsed catch-all. Order matters — more specific patterns first so
+// e.g. "Action Station" doesn't fall through to the generic Cocktail Hour
+// match before the Action Stations check runs.
 const STYLE_PATTERNS = [
   [/buffet/i, 'Buffet'],
+  [/action\s*station/i, 'Action Stations'],
   [/\bbar\b/i, 'Bar'],
-  [/cocktail|passed|stations?/i, 'Stations'],
-  [/plated|served|serve\b/i, 'Plated'],
+  [/passed\s*apps?|passed\s*hors/i, 'Passed Apps'],
+  [/cocktail\s*hour/i, 'Cocktail Hour'],
+  [/family\s*style/i, 'Family Style'],
+  [/plated|^serve\b|served\b/i, 'Plated'],
   [/ceremony/i, 'Ceremony'],
-  [/strike|bussing|breakdown/i, 'Wrap'],
+  [/strike|bussing|breakdown/i, 'Strike'],
 ];
 function guessStyle(name) {
   for (const [re, label] of STYLE_PATTERNS) if (re.test(name)) return label;
@@ -289,7 +298,34 @@ function extractDietFlags(foodItems, freeTextSections) {
   });
 }
 
-// ---- Generic free-text section parser (Operations Notes, Decor, etc.) ----
+// ---- Layout & Locations extraction ----
+// Staff need "where does stuff go" surfaced prominently, not buried in the
+// generic collapsed reference accordion alongside Bar Overview/Decor/Equipment.
+// Pulls the Service Setup / Layout section wholesale (it's already
+// location-focused by nature) plus any location-flavored lines from
+// Operations Notes (which mixes location info with unrelated logistics
+// like power/water availability — only the location-flavored lines get
+// pulled out, the rest stays in Operations Notes where it belongs).
+const LOCATION_KEYWORDS = /\b(set up|setup|located?|location|along the|near the|side of|end of|wall|fence|driveway|garage|passthrough|park(ing)?|sw |ne |nw |se )\b/i;
+function extractLayoutLocations(freeTextSections) {
+  const parts = [];
+  const layoutSection = freeTextSections['Service Setup / Layout'];
+  if (layoutSection && layoutSection.trim()) {
+    parts.push({ source: 'Service Setup / Layout', text: layoutSection.trim() });
+  }
+  const opsNotes = freeTextSections['Operations Notes'];
+  if (opsNotes) {
+    const locationLines = opsNotes.split('\n')
+      .map(l => l.trim())
+      .filter(l => l && LOCATION_KEYWORDS.test(l));
+    if (locationLines.length) {
+      parts.push({ source: 'Operations Notes', text: locationLines.join('\n') });
+    }
+  }
+  return parts; // [{source, text}] — empty array if nothing location-flavored found
+}
+
+
 // Collapses all rows in the chunk into cleaned, newline-joined prose/bullets.
 function parseFreeTextSection(rows) {
   const lines = [];
@@ -410,6 +446,7 @@ function parseEventWorksheet(csvText) {
   result.responsibilityMatrix = buildResponsibilityMatrix(result.freeText, result.timeline);
   result.eventOverview = result.freeText['Event Overview'] || '';
   result.buffetHotItems = buildBuffetLayoutSuggestion(result.food.items);
+  result.layoutLocations = extractLayoutLocations(result.freeText);
 
   return result;
 }
@@ -427,10 +464,13 @@ function parseEventWorksheet(csvText) {
 const RESPONSIBILITY_MATRIX_TEMPLATE = [
   { group: 'Setup', key: 'setup_guest_tables', label: 'Setup guest tables/chairs' },
   { group: 'Setup', key: 'setup_flatware_china', label: 'Setting tables with flatware/china' },
-  { group: 'Setup', key: 'fill_water_tables', label: 'Fill water on tables' },
+  { group: 'Setup', key: 'prefill_water_goblets', label: 'Prefill water goblets tableside' },
+  { group: 'Setup', key: 'tableside_water_service', label: 'Tableside water service' },
   { group: 'Setup', key: 'setup_buffet_tables', label: 'Setup buffet tables for buffet' },
   { group: 'Setup', key: 'setup_app_tables', label: 'Setup tables for appetizers' },
   { group: 'Setup', key: 'setup_bev_tables', label: 'Setup table for beverages' },
+  { group: 'Setup', key: 'mangia_disposables', label: 'Mangia disposables' },
+  { group: 'Setup', key: 'event_rentals', label: 'Event rentals' },
   { group: 'Appetizers', key: 'apps_stationary', label: 'Stationary apps' },
   { group: 'Appetizers', key: 'apps_own_table', label: 'Apps on their own table' },
   { group: 'Appetizers', key: 'apps_main_buffet', label: 'Apps using main buffet table' },
@@ -484,9 +524,13 @@ const RESPONSIBILITY_RULES = [
   { key: 'setup_flatware_china', value: 'N', re: /no\s*pre\s*set\s*place\s*settings?/i },
   { key: 'setup_flatware_china', value: 'Y', re: /set(ting)?\s*tables?\s*with\s*place\s*settings?|venue\s*setting\s*tables/i },
 
-  // Beverage dispensers / water — requires an action verb directly on water/pitchers,
-  // not just any sentence that happens to mention "water service" in passing.
-  { key: 'fill_water_tables', value: 'Y', re: /\b(fill|filling|refill|refilling)\b[^.]{0,20}\bwater\b|tableside\s*water\s*service\s*\(?bringing/i },
+  // Water — split into two genuinely distinct tasks (prefill before service vs.
+  // ongoing tableside service during the meal), since events do one, the other,
+  // or both — a single merged rule can't represent that. Each stays narrowly
+  // scoped to its own phrasing; ambiguous general "water" mentions don't fire
+  // either one — better to leave both unset than guess which was meant.
+  { key: 'prefill_water_goblets', value: 'Y', re: /\b(fill|filling|prefill|pre-fill)\b[^.]{0,20}\bwater\s*(goblet|glass)/i },
+  { key: 'tableside_water_service', value: 'Y', re: /tableside\s*water\s*service|refill(ing)?\s*water\s*(pitchers?|during)/i },
 ];
 
 // Scan a worksheet's free-text sections + timeline notes for responsibility
@@ -634,6 +678,6 @@ if (typeof module !== 'undefined') {
     timeToMinutes, minutesToTime, cleanText, guessStyle, matchTrigger,
     RESPONSIBILITY_MATRIX_TEMPLATE, buildResponsibilityMatrix, detectResponsibilityFlags,
     BUFFET_LAYOUT_DEFAULTS, buildBuffetLayoutSuggestion, suggestHotItemCategory,
-    emptyDishLookup,
+    emptyDishLookup, extractLayoutLocations,
   };
 }

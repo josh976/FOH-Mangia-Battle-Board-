@@ -11,12 +11,14 @@ const STATE = {
   dietFlags: [],
   refSections: [], // [{name, text}]
   eventOverview: '',
+  layoutLocations: [], // [{source, text}] — surfaced separately from refSections, staff need this early
   responsibilityMatrix: [], // [{group,key,label,value,auto,matchedText,matchedSource}]
   buffetLayout: {
     startSide: 'salad',
     hotItems: [], // [{name, category, notes}] — user-editable order
   },
   dishLookup: {}, // { [menuItemNameLower]: { dish, servingware, notes } }
+  attachments: [], // [{id, name, dataUrl, type}] — reference images, excluded from print
 };
 
 let dragSrcId = null;
@@ -73,16 +75,16 @@ const TRIGGER_TEMPLATES = {
     ],
   },
   stations_start: {
-    label: 'Stations / cocktail hour open',
+    label: 'Cocktail hour open',
     anchorLabel: 'Cocktail Hour Start',
     steps: [
       { offset:-20, name:'Set stationary app table / passed app trays', team:'FOH' },
       { offset:-10, name:'Diet-flagged apps set aside + labeled', team:'BOH' },
-      { offset:0,   name:'Begin passing / stations service', team:'FOH' },
+      { offset:0,   name:'Begin passing apps', team:'FOH' },
     ],
   },
   stations_end: {
-    label: 'Stations / cocktail hour close',
+    label: 'Cocktail hour close',
     anchorLabel: 'Cocktail Hour End',
     steps: [
       { offset:0,  name:'Clear app trays, wipe down station', team:'FOH' },
@@ -200,6 +202,40 @@ function renderOverview() {
 }
 
 // ============================================================
+// LAYOUT & LOCATIONS RENDER
+// "Where does stuff go" surfaced prominently and early — staff orient
+// around this before anything else. Editable like everything else;
+// each source block is a plain textarea so it can be corrected/added to
+// without fighting a rigid structure (location notes are prose, not data).
+// ============================================================
+function renderLayoutLocations() {
+  const section = document.getElementById('section-layout');
+  const body = document.getElementById('layout-body');
+  const hasContent = STATE.layoutLocations && STATE.layoutLocations.length;
+  if (!hasContent) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  body.innerHTML = '';
+
+  STATE.layoutLocations.forEach((block, idx) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'layout-block';
+
+    const label = document.createElement('div');
+    label.className = 'layout-block-label';
+    label.textContent = block.source;
+    wrap.appendChild(label);
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'layout-block-text';
+    textarea.value = block.text;
+    textarea.addEventListener('input', e => { STATE.layoutLocations[idx].text = e.target.value; });
+    wrap.appendChild(textarea);
+
+    body.appendChild(wrap);
+  });
+}
+
+// ============================================================
 // RESPONSIBILITY MATRIX RENDER
 // ============================================================
 function groupBy(arr, keyFn) {
@@ -269,6 +305,11 @@ function renderResponsibility() {
 
 // ============================================================
 // BUFFET LAYOUT RENDER
+// Real spatial table diagram (cold line + hot line as literal
+// table shapes, matching Mangia's printed buffet drawing
+// template) with a synced plain-list editor beneath it for
+// text/category/order edits. The diagram is regenerated from
+// STATE on every change — it's a view, not a separate state.
 // ============================================================
 function renderBuffetLayout() {
   const section = document.getElementById('section-buffet');
@@ -279,39 +320,22 @@ function renderBuffetLayout() {
   section.style.display = '';
   body.innerHTML = '';
 
-  // cold line — fixed, illustrative
-  const coldRow = document.createElement('div');
-  coldRow.className = 'buffet-cold-row';
-  const coldLabel = document.createElement('div');
-  coldLabel.className = 'buffet-start-label';
-  coldLabel.innerHTML = '<i>start</i> →';
-  coldRow.appendChild(coldLabel);
-  BUFFET_LAYOUT_DEFAULTS.coldLine.forEach(slot => {
-    const box = document.createElement('div');
-    box.className = 'buffet-slot buffet-slot-cold';
-    box.textContent = slot.label;
-    coldRow.appendChild(box);
-  });
-  const arrowBox = document.createElement('div');
-  arrowBox.className = 'buffet-arrow';
-  arrowBox.textContent = '→';
-  coldRow.appendChild(arrowBox);
-  body.appendChild(coldRow);
+  body.appendChild(buildBuffetDiagramSVG(STATE.buffetLayout.hotItems));
 
-  // hot line — editable, draggable order
-  const hotRow = document.createElement('div');
-  hotRow.className = 'buffet-hot-row';
+  // ---- synced edit list (text/category/order/delete) ----
+  const editWrap = document.createElement('div');
+  editWrap.className = 'buffet-edit-list no-print';
   if (!hasHots) {
     const empty = document.createElement('div');
     empty.className = 'buffet-hot-empty';
     empty.textContent = 'No hot items detected — add manually below';
-    hotRow.appendChild(empty);
+    editWrap.appendChild(empty);
   } else {
     STATE.buffetLayout.hotItems.forEach((item, idx) => {
-      hotRow.appendChild(renderBuffetHotChip(item, idx));
+      editWrap.appendChild(renderBuffetEditRow(item, idx));
     });
   }
-  body.appendChild(hotRow);
+  body.appendChild(editWrap);
 
   const addBtn = document.createElement('button');
   addBtn.className = 'btn-sm btn-ghost no-print';
@@ -330,33 +354,126 @@ function renderBuffetLayout() {
 }
 
 const CATEGORY_COLOR_CLASS = { veggie:'cat-veggie', starch:'cat-starch', protein:'cat-protein' };
-function renderBuffetHotChip(item, idx) {
-  const chip = document.createElement('div');
-  chip.className = 'buffet-slot buffet-slot-hot ' + (item.category ? CATEGORY_COLOR_CLASS[item.category] : 'cat-unknown');
-  chip.draggable = true;
-  chip.dataset.idx = idx;
+const CATEGORY_SVG_FILL = { veggie:'var(--leafy-soft)', starch:'#FBF3DC', protein:'#FBF0E6', null:'var(--paper)' };
+const CATEGORY_SVG_STROKE = { veggie:'var(--leafy)', starch:'var(--gold)', protein:'var(--orange)', null:'var(--line-strong)' };
 
-  chip.addEventListener('dragstart', e => { dragSrcId = 'buffet_' + idx; chip.style.opacity = '.4'; });
-  chip.addEventListener('dragend', () => chip.style.opacity = '1');
-  chip.addEventListener('dragover', e => e.preventDefault());
-  chip.addEventListener('drop', e => {
+// ---- builds the visual diagram as a real <svg>, scaling chafer width to item count ----
+function buildBuffetDiagramSVG(hotItems) {
+  const wrap = document.createElement('div');
+  wrap.className = 'buffet-svg-wrap';
+
+  const cold = BUFFET_LAYOUT_DEFAULTS.coldLine;
+  const coldTableW = 280, coldTableX = 55, tableY = 10, tableH = 100;
+  const hotTableX = coldTableX + coldTableW + 40;
+  const itemCount = Math.max(hotItems.length, 1);
+  const hotTableW = Math.max(280, itemCount * 120);
+  const plateX = hotTableX + hotTableW + 35;
+  const totalW = plateX + 60;
+
+  let svg = `<svg class="buffet-diagram" viewBox="0 0 ${totalW} 220" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<defs><marker id="bf-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="var(--line-strong)"/></marker></defs>`;
+
+  // start label + arrow
+  svg += `<text x="0" y="30" class="buf-start-tag">start</text>
+    <path d="M30,26 L${coldTableX - 7},26" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
+
+  // cold line table
+  svg += `<rect x="${coldTableX}" y="${tableY}" width="${coldTableW}" height="${tableH}" rx="4" class="buf-table"/>`;
+  svg += `<rect x="${coldTableX+10}" y="${tableY+10}" width="55" height="40" rx="2" class="buf-cold-item"/>
+    <text x="${coldTableX+37}" y="${tableY+34}" text-anchor="middle" class="buf-sublabel">Cutlery</text>`;
+  svg += `<circle cx="${coldTableX+95}" cy="${tableY+30}" r="22" class="buf-cold-item"/>
+    <text x="${coldTableX+95}" y="${tableY+34}" text-anchor="middle" class="buf-sublabel">Butter</text>`;
+  svg += `<rect x="${coldTableX+140}" y="${tableY+8}" width="60" height="44" rx="2" class="buf-cold-item" transform="rotate(15 ${coldTableX+170} ${tableY+30})"/>
+    <text x="${coldTableX+170}" y="${tableY+70}" text-anchor="middle" class="buf-sublabel">Bread</text>`;
+  svg += `<circle cx="${coldTableX+245}" cy="${tableY+30}" r="28" class="buf-cold-item"/>
+    <text x="${coldTableX+245}" y="${tableY+34}" text-anchor="middle" class="buf-sublabel">Salad</text>`;
+  svg += `<text x="${coldTableX+coldTableW/2}" y="${tableY+85}" text-anchor="middle" class="buf-section-label">cold line</text>`;
+
+  // arrow to hot table
+  svg += `<path d="M${coldTableX+coldTableW},60 L${hotTableX-7},60" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
+
+  // hot line table
+  svg += `<rect x="${hotTableX}" y="${tableY}" width="${hotTableW}" height="${tableH}" rx="4" class="buf-table"/>`;
+  if (!hotItems.length) {
+    svg += `<text x="${hotTableX+hotTableW/2}" y="${tableY+55}" text-anchor="middle" class="buf-sublabel" style="font-style:italic;">no hot items yet</text>`;
+  } else {
+    const pad = 10, gap = 6;
+    const slotW = (hotTableW - pad*2 - gap*(itemCount-1)) / itemCount;
+    hotItems.forEach((item, i) => {
+      const x = hotTableX + pad + i * (slotW + gap);
+      const fill = CATEGORY_SVG_FILL[item.category] || CATEGORY_SVG_FILL[null];
+      const stroke = CATEGORY_SVG_STROKE[item.category] || CATEGORY_SVG_STROKE[null];
+      const dash = item.category ? '' : 'stroke-dasharray="4,3"';
+      svg += `<rect x="${x}" y="${tableY+10}" width="${slotW}" height="80" rx="2"
+        fill="${fill}" stroke="${stroke}" stroke-width="1.5" ${dash}/>`;
+      // wrap name across up to 2 lines, simple char-based wrap
+      const words = escapeHtml(item.name).split(' ');
+      let lines = [], cur = '';
+      words.forEach(w => {
+        if ((cur + ' ' + w).trim().length > 14 && cur) { lines.push(cur); cur = w; }
+        else cur = (cur ? cur + ' ' : '') + w;
+      });
+      if (cur) lines.push(cur);
+      lines = lines.slice(0, 2);
+      const labelYStart = tableY + 50 - (lines.length - 1) * 6;
+      lines.forEach((line, li) => {
+        svg += `<text x="${x+slotW/2}" y="${labelYStart + li*12}" text-anchor="middle" class="buf-sublabel" style="font-weight:600;">${line}</text>`;
+      });
+      svg += `<text x="${x+slotW/2}" y="${tableY+82}" text-anchor="middle" class="buf-sublabel" style="font-size:8px;opacity:.75;">${item.category || '?'}</text>`;
+    });
+  }
+  svg += `<text x="${hotTableX+hotTableW/2}" y="${tableY+85}" text-anchor="middle" class="buf-section-label">hot line</text>
+    <text x="${hotTableX+hotTableW/2}" y="${tableY+96}" text-anchor="middle" class="buf-sublabel" style="font-size:8.5px;font-style:italic;">veggie &#8594; starch &#8594; protein</text>`;
+
+  // arrow + plates
+  svg += `<path d="M${hotTableX+hotTableW},60 L${plateX-7},60" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
+  svg += `<circle cx="${plateX+18}" cy="35" r="14" class="buf-plate"/>
+    <circle cx="${plateX+18}" cy="60" r="14" class="buf-plate"/>
+    <circle cx="${plateX+18}" cy="85" r="14" class="buf-plate"/>
+    <text x="${plateX+18}" y="115" text-anchor="middle" class="buf-sublabel">Plates</text>`;
+
+  // guest flow line
+  svg += `<path d="M48,150 C ${totalW*0.3},180 ${totalW*0.6},180 ${totalW-70},150" class="buf-flow-arrow" stroke-dasharray="2,3" marker-end="url(#bf-arrow)"/>
+    <text x="${totalW/2}" y="195" text-anchor="middle" class="buf-sublabel" style="font-style:italic;">guest flow &#8594;</text>`;
+
+  svg += `</svg>`;
+  wrap.innerHTML = svg;
+  return wrap;
+}
+
+// ---- compact editable row, synced to the same hotItems array the diagram reads ----
+function renderBuffetEditRow(item, idx) {
+  const row = document.createElement('div');
+  row.className = 'buffet-edit-row';
+  row.draggable = true;
+  row.dataset.idx = idx;
+
+  row.addEventListener('dragstart', () => { dragSrcId = 'buffet_' + idx; row.style.opacity = '.4'; });
+  row.addEventListener('dragend', () => row.style.opacity = '1');
+  row.addEventListener('dragover', e => e.preventDefault());
+  row.addEventListener('drop', e => {
     e.preventDefault();
     if (!dragSrcId || !String(dragSrcId).startsWith('buffet_')) return;
     const fromIdx = parseInt(String(dragSrcId).replace('buffet_',''), 10);
-    const toIdx = idx;
-    if (fromIdx === toIdx) return;
+    if (fromIdx === idx) return;
     const arr = STATE.buffetLayout.hotItems;
     const [moved] = arr.splice(fromIdx, 1);
-    arr.splice(toIdx, 0, moved);
+    arr.splice(idx, 0, moved);
     renderBuffetLayout();
   });
+
+  const handle = document.createElement('span');
+  handle.className = 'tl-drag';
+  handle.textContent = '⠿';
+  row.appendChild(handle);
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
   nameInput.value = item.name;
   nameInput.className = 'buffet-hot-name';
-  nameInput.addEventListener('input', e => item.name = e.target.value);
-  chip.appendChild(nameInput);
+  nameInput.addEventListener('input', e => { item.name = e.target.value; refreshBuffetDiagramOnly(); });
+  row.appendChild(nameInput);
 
   const catSel = document.createElement('select');
   catSel.className = 'buffet-hot-cat';
@@ -369,7 +486,7 @@ function renderBuffetHotChip(item, idx) {
     item.category = e.target.value || null;
     renderBuffetLayout();
   });
-  chip.appendChild(catSel);
+  row.appendChild(catSel);
 
   const delBtn = document.createElement('button');
   delBtn.className = 'icon-btn no-print';
@@ -379,9 +496,19 @@ function renderBuffetHotChip(item, idx) {
     STATE.buffetLayout.hotItems.splice(idx, 1);
     renderBuffetLayout();
   });
-  chip.appendChild(delBtn);
+  row.appendChild(delBtn);
 
-  return chip;
+  return row;
+}
+
+// cheap re-render of just the diagram (used on every keystroke in the name field,
+// so we don't tear down/rebuild the edit list — and lose input focus — on each keypress)
+function refreshBuffetDiagramOnly() {
+  const body = document.getElementById('buffet-body');
+  const oldSvgWrap = body.querySelector('.buffet-svg-wrap');
+  if (!oldSvgWrap) return;
+  const newSvgWrap = buildBuffetDiagramSVG(STATE.buffetLayout.hotItems);
+  body.replaceChild(newSvgWrap, oldSvgWrap);
 }
 
 // ============================================================
@@ -480,11 +607,33 @@ function renderTimeline() {
   if (!STATE.timeline.length) { empty.style.display=''; return; }
   empty.style.display = 'none';
 
-  // keep sorted by time for display, but respect manual drag order for
-  // same-time or undated rows by relying on stable array order
+  // Renders in current array order, not re-sorted by time. Sorting only
+  // happens at the moment rows are inserted (import, trigger template) —
+  // see insertTriggerTemplate() and sortTimelineByTime(). Re-sorting on
+  // every render would fight manual drag-reorder, snapping dragged rows
+  // back to chronological position even when the person deliberately
+  // wants two same-time tasks shown in a specific order.
   STATE.timeline.forEach(item => {
     body.appendChild(renderTimelineRow(item));
   });
+}
+
+// Stable sort by parsed time-of-day; rows with no parseable time keep
+// their relative position at the end. Used right after bulk inserts
+// (import, trigger template) so the board opens in correct chronological
+// order — NOT called on every render, so manual drag order persists.
+function sortTimelineByTime() {
+  STATE.timeline = STATE.timeline
+    .map((item, idx) => ({ item, idx })) // stable-sort shim
+    .sort((a, b) => {
+      const am = a.item.timeMinutes, bm = b.item.timeMinutes;
+      if (am == null && bm == null) return a.idx - b.idx;
+      if (am == null) return 1;
+      if (bm == null) return -1;
+      if (am !== bm) return am - bm;
+      return a.idx - b.idx; // stable: preserve original order for same-time rows
+    })
+    .map(x => x.item);
 }
 
 function renderTimelineRow(item) {
@@ -654,10 +803,93 @@ function insertTriggerTemplate(anchorItem) {
     };
   });
 
-  // insert right after the anchor row, in template order
+  // insert right after the anchor row, then re-sort by time — a sequence's
+  // steps usually start BEFORE the anchor (e.g. buffet setup runs from
+  // anchor-60min to anchor+0), so a naive splice-after leaves earlier-timed
+  // generated rows displayed below their later-timed anchor. Sorting here
+  // (not on every render) fixes display order without fighting manual drag.
   STATE.timeline.splice(anchorIdx + 1, 0, ...newRows);
   anchorItem.triggerApplied = true;
+  sortTimelineByTime();
   toast(tpl.label + ' added — edit any row as needed');
+}
+
+// ============================================================
+// ATTACHMENTS
+// Reference images (layout photos, venue diagrams) — thumbnail strip,
+// click to expand in a lightbox modal. Stored as data URLs in STATE so
+// they travel with JSON export/load (no backend, consistent with the
+// rest of the app). Explicitly excluded from print via CSS — these are
+// for BUILDING the board, not part of the staff-facing printed page;
+// the old v1 tool's mistake was letting full-size images bloat printouts.
+// ============================================================
+function renderAttachments() {
+  const section = document.getElementById('section-attachments');
+  const strip = document.getElementById('attachment-strip');
+  const emptyHint = document.getElementById('attachment-empty');
+  const hasAttachments = STATE.attachments && STATE.attachments.length;
+
+  // Section stays visible even when empty (unlike data-driven sections)
+  // because it has its own persistent "+ Add image" action — hiding it
+  // would remove the only way to add the first attachment.
+  section.style.display = '';
+  strip.innerHTML = '';
+  emptyHint.style.display = hasAttachments ? 'none' : '';
+
+  STATE.attachments.forEach(att => {
+    const thumb = document.createElement('div');
+    thumb.className = 'attachment-thumb';
+    thumb.title = att.name;
+
+    const img = document.createElement('img');
+    img.src = att.dataUrl;
+    img.alt = att.name;
+    thumb.appendChild(img);
+
+    thumb.addEventListener('click', () => openAttachmentModal(att));
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'attachment-thumb-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remove';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      STATE.attachments = STATE.attachments.filter(a => a.id !== att.id);
+      renderAttachments();
+    });
+    thumb.appendChild(removeBtn);
+
+    strip.appendChild(thumb);
+  });
+}
+
+function openAttachmentModal(att) {
+  const modal = document.getElementById('attachment-modal');
+  document.getElementById('attachment-modal-img').src = att.dataUrl;
+  document.getElementById('attachment-modal-caption').textContent = att.name;
+  modal.style.display = 'flex';
+}
+function closeAttachmentModal() {
+  document.getElementById('attachment-modal').style.display = 'none';
+}
+
+// Reads one or more File objects, converts each to a data URL, appends
+// to STATE.attachments. No size/type validation beyond the file input's
+// accept="image/*" — acceptable for an internal tool with a small team,
+// not worth building upload validation UI for.
+function handleAttachmentFiles(fileList) {
+  Array.from(fileList).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      STATE.attachments.push({
+        id: 'att_' + Math.random().toString(36).slice(2, 9),
+        name: file.name,
+        dataUrl: e.target.result,
+      });
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 // ============================================================
@@ -701,11 +933,17 @@ function handleWorksheetFile(file) {
       const result = parseEventWorksheet(e.target.result);
       STATE.meta = { ...STATE.meta, ...result.meta };
       STATE.timeline = result.timeline.map(t => ({ ...t, team:'', generated:false, triggerApplied:false }));
+      sortTimelineByTime();
       STATE.dietFlags = result.dietFlags;
       STATE.refSections = Object.entries(result.freeText)
-        .filter(([name]) => name !== 'Event Overview') // promoted to its own section
+        .filter(([name]) => name !== 'Event Overview' && name !== 'Service Setup / Layout')
+        // Event Overview promoted to its own section; Service Setup / Layout
+        // promoted into the new Layout & Locations section below — both
+        // excluded here so they're not ALSO sitting in the generic
+        // collapsed accordion, which would just be confusing duplication.
         .map(([name, text]) => ({ name, text }));
       STATE.eventOverview = result.eventOverview || '';
+      STATE.layoutLocations = result.layoutLocations || [];
       STATE.responsibilityMatrix = result.responsibilityMatrix || [];
       STATE.buffetLayout.hotItems = result.buffetHotItems || [];
       renderAll();
@@ -778,11 +1016,13 @@ function escapeHtml(s) {
 function renderAll() {
   renderMeta();
   renderOverview();
+  renderLayoutLocations();
   renderResponsibility();
   renderDiet();
   renderRoster();
   renderTimeline();
   renderBuffetLayout();
+  renderAttachments();
   renderRef();
 }
 
@@ -833,6 +1073,18 @@ document.addEventListener('DOMContentLoaded', () => {
   overviewBody.addEventListener('input', e => {
     STATE.eventOverview = e.target.value;
     document.getElementById('section-overview').dataset.userTouched = 'true';
+  });
+
+  const attachmentInput = document.getElementById('file-attachment');
+  document.getElementById('btn-add-attachment').addEventListener('click', () => attachmentInput.click());
+  attachmentInput.addEventListener('change', e => {
+    if (e.target.files.length) handleAttachmentFiles(e.target.files);
+    attachmentInput.value = ''; // allow re-selecting the same file later
+  });
+  document.getElementById('attachment-modal-close').addEventListener('click', closeAttachmentModal);
+  document.querySelector('.attachment-modal-backdrop').addEventListener('click', closeAttachmentModal);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeAttachmentModal();
   });
 
   renderAll();

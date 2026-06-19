@@ -155,6 +155,18 @@
   }
   .team-badge.lead{border-color:var(--leafy);color:var(--leafy);background:var(--leafy-soft);}
 
+  /* ---------- Layout & locations ---------- */
+  .layout-block{margin-bottom:14px;}
+  .layout-block:last-child{margin-bottom:0;}
+  .layout-block-label{
+    font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;
+    color:var(--charcoal-soft);margin-bottom:5px;
+  }
+  .layout-block-text{
+    width:100%;min-height:72px;border:none;background:transparent;padding:0;
+    font-size:13.5px;line-height:1.6;color:var(--charcoal);resize:vertical;
+  }
+
   /* ---------- Responsibility matrix ---------- */
   #responsibility-body{display:grid;grid-template-columns:repeat(2,1fr);gap:0 32px;}
   .resp-group{margin-bottom:14px;}
@@ -179,26 +191,27 @@
   .resp-btn.active-n{background:var(--danger);border-color:var(--danger);color:#fff;}
   .resp-btn.active-unset{background:var(--line);border-color:var(--line-strong);color:var(--charcoal-soft);}
 
-  /* ---------- Buffet layout diagram ---------- */
-  .buffet-cold-row,.buffet-hot-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
-  .buffet-start-label{font-size:11px;color:var(--charcoal-soft);font-style:italic;margin-right:4px;white-space:nowrap;}
-  .buffet-slot{
-    border:1.5px solid var(--charcoal-soft);border-radius:var(--radius);
-    padding:10px 14px;font-size:12.5px;font-weight:600;text-align:center;
-    background:var(--paper);min-width:84px;
+  /* ---------- Buffet layout diagram (real spatial SVG) ---------- */
+  .buffet-svg-wrap{width:100%;overflow-x:auto;margin-bottom:14px;}
+  .buffet-diagram{width:100%;min-width:560px;height:auto;display:block;}
+  .buf-table{fill:var(--almost-white);stroke:var(--charcoal-soft);stroke-width:1.5;}
+  .buf-cold-item{fill:var(--paper);stroke:var(--charcoal-soft);stroke-width:1.2;}
+  .buf-plate{fill:none;stroke:var(--charcoal-soft);stroke-width:1.2;}
+  .buf-flow-arrow{stroke:var(--line-strong);stroke-width:1.5;fill:none;}
+  .buf-start-tag{font-size:10px;font-style:italic;fill:var(--charcoal-soft);font-family:var(--sans);}
+  .buf-sublabel{font-size:9px;fill:var(--charcoal-soft);font-family:var(--sans);}
+  .buf-section-label{font-size:10px;letter-spacing:1px;text-transform:uppercase;fill:var(--charcoal-soft);font-family:var(--sans);font-weight:700;}
+
+  /* compact synced edit list below the diagram */
+  .buffet-edit-list{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:12px;}
+  .buffet-edit-row{
+    display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);
+    border-radius:var(--radius);background:var(--paper);cursor:grab;
   }
-  .buffet-slot-cold{color:var(--charcoal-soft);}
-  .buffet-arrow{font-size:18px;color:var(--line-strong);padding:0 4px;}
-  .buffet-slot-hot{
-    display:flex;align-items:center;gap:6px;background:var(--almost-white);cursor:grab;
-    min-width:140px;
-  }
-  .buffet-slot-hot input{border:none;background:transparent;font-weight:600;font-size:12.5px;width:100%;padding:0;}
-  .buffet-slot-hot select{font-size:10px;border:none;background:transparent;color:var(--charcoal-soft);padding:0;}
-  .buffet-slot-hot.cat-veggie{border-color:var(--leafy);}
-  .buffet-slot-hot.cat-starch{border-color:var(--gold);}
-  .buffet-slot-hot.cat-protein{border-color:var(--orange);}
-  .buffet-slot-hot.cat-unknown{border-color:var(--line-strong);border-style:dashed;}
+  .buffet-edit-row .tl-drag{flex-shrink:0;}
+  .buffet-hot-name{flex:1;border:none;background:transparent;font-size:12.5px;font-weight:600;padding:2px;}
+  .buffet-hot-name:focus{outline:none;background:var(--almost-white);}
+  .buffet-hot-cat{font-size:11px;border:1px solid var(--line-strong);border-radius:4px;padding:3px 6px;background:var(--almost-white);}
   .buffet-hot-empty{font-size:12.5px;color:var(--charcoal-soft);font-style:italic;padding:8px 0;}
   .buffet-note{font-size:12px;color:var(--charcoal-soft);margin-top:10px;line-height:1.6;border-top:1px solid var(--line);padding-top:10px;}
 
@@ -285,6 +298,41 @@
     border:1.5px dashed var(--line-strong);border-radius:var(--radius-lg);font-size:13px;
   }
 
+  /* ---------- Attachments (thumbnail strip + lightbox; screen-only, never printed) ---------- */
+  .attachment-strip{display:flex;gap:10px;flex-wrap:wrap;}
+  .attachment-thumb{
+    position:relative;width:84px;height:84px;border-radius:var(--radius);overflow:hidden;
+    border:1.5px solid var(--line-strong);cursor:pointer;flex-shrink:0;background:var(--paper);
+  }
+  .attachment-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .attachment-thumb:hover{border-color:var(--charcoal);}
+  .attachment-thumb-remove{
+    position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;
+    background:rgba(43,41,38,.75);color:#fff;border:none;font-size:12px;line-height:1;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+  }
+  .attachment-thumb-remove:hover{background:var(--danger);}
+  .attachment-empty-hint{font-size:12px;color:var(--charcoal-soft);font-style:italic;margin-top:8px;}
+
+  .attachment-modal{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;}
+  .attachment-modal-backdrop{position:absolute;inset:0;background:rgba(20,19,17,.85);}
+  .attachment-modal-content{position:relative;max-width:90vw;max-height:88vh;z-index:1;text-align:center;}
+  .attachment-modal-content img{max-width:90vw;max-height:80vh;border-radius:var(--radius);display:block;}
+  .attachment-modal-caption{color:var(--almost-white);font-size:13px;margin-top:10px;}
+  .attachment-modal-close{
+    position:absolute;top:-38px;right:0;background:none;border:none;color:var(--almost-white);
+    font-size:28px;line-height:1;cursor:pointer;padding:4px 8px;
+  }
+  .attachment-modal-close:hover{color:var(--highlight);}
+
+  /* Attachments are reference material for BUILDING the board, not part of the
+     staff-facing printed document — explicitly excluded from print regardless
+     of .no-print coverage elsewhere, since this is image weight we never want
+     bleeding into a printed page by accident. */
+  @media print{
+    #section-attachments{display:none !important;}
+  }
+
   /* ---------- Upload zone ---------- */
   .upload-row{display:flex;gap:12px;flex-wrap:wrap;}
   .upload-zone{
@@ -327,7 +375,8 @@
     #responsibility-body{break-inside:avoid;}
     .resp-group{break-inside:avoid;}
     #buffet-body{break-inside:avoid;}
-    .buffet-slot{border-color:#555;}
+    .buf-table,.buf-cold-item,.buf-plate{stroke:#555 !important;}
+    .buffet-edit-list{display:none;}
     .resp-btn{border-color:#888;}
     .resp-btn.active-y{background:#000 !important;border-color:#000 !important;color:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .resp-btn.active-n{background:#fff !important;border:1.5px solid #000 !important;color:#000 !important;text-decoration:line-through;}
@@ -394,6 +443,14 @@
     </div>
   </div>
 
+  <!-- LAYOUT & LOCATIONS -->
+  <div class="section" id="section-layout" style="display:none;">
+    <div class="section-head">
+      <div class="section-eyebrow"><span class="section-eyebrow-text">Layout &amp; locations</span></div>
+    </div>
+    <div class="card" id="layout-body"></div>
+  </div>
+
   <!-- RESPONSIBILITY MATRIX -->
   <div class="section" id="section-responsibility" style="display:none;">
     <div class="section-head">
@@ -445,6 +502,19 @@
     </div>
   </div>
 
+  <!-- ATTACHMENTS -->
+  <div class="section" id="section-attachments" style="display:none;">
+    <div class="section-head">
+      <div class="section-eyebrow"><span class="section-eyebrow-text">Attachments</span></div>
+      <button class="btn-sm btn-ghost no-print" id="btn-add-attachment">+ Add image</button>
+    </div>
+    <div class="card no-print">
+      <div class="attachment-strip" id="attachment-strip"></div>
+      <input type="file" id="file-attachment" accept="image/*" multiple style="display:none">
+      <div id="attachment-empty" class="attachment-empty-hint">Reference images — layout photos, venue diagrams. Click to view full size. Not included in print.</div>
+    </div>
+  </div>
+
   <!-- REFERENCE / SETUP NOTES -->
   <div class="section" id="section-ref" style="display:none;">
     <div class="section-head">
@@ -456,6 +526,15 @@
 </div>
 
 <div id="toast"></div>
+
+<div id="attachment-modal" class="attachment-modal no-print" style="display:none;">
+  <div class="attachment-modal-backdrop"></div>
+  <div class="attachment-modal-content">
+    <button class="attachment-modal-close" id="attachment-modal-close">&times;</button>
+    <img id="attachment-modal-img" src="" alt="">
+    <div class="attachment-modal-caption" id="attachment-modal-caption"></div>
+  </div>
+</div>
 
 <script src="parser.js"></script>
 <script src="app.js"></script>
