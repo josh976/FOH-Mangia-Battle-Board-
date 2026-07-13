@@ -1511,6 +1511,189 @@ function renderAll() {
 }
 
 // ============================================================
+// PRINT DOC GENERATOR
+// Builds clean HTML (zero form elements) from STATE for printing.
+// Wired to window.onbeforeprint / onafterprint.
+// ============================================================
+function buildPrintDoc() {
+  const esc = s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const m = STATE.meta || {};
+  let h = '';
+
+  // Header
+  h += `<div class="pd-header">Mangia Catering Co. — FOH Battle Board`;
+  if (m.eventTitle) h += `<span class="pd-header-sub"> · ${esc(m.eventTitle)}</span>`;
+  h += `</div>`;
+
+  // Meta grid
+  const metaPairs = [
+    ['Event', m.eventTitle], ['Date', m.eventDate],
+    ['Guests', m.guestCount], ['Style', m.serviceStyle],
+  ].filter(([,v]) => v);
+  if (metaPairs.length) {
+    h += '<div class="pd-meta">';
+    metaPairs.forEach(([l,v]) => {
+      h += `<div><div class="pd-meta-label">${esc(l)}</div><div class="pd-meta-val">${esc(v)}</div></div>`;
+    });
+    h += '</div>';
+  }
+
+  // Overview
+  if (STATE.eventOverview) {
+    h += `<div class="pd-overview">${esc(STATE.eventOverview)}</div>`;
+  }
+
+  // Layout & locations
+  if (STATE.layoutLocations && STATE.layoutLocations.length) {
+    h += '<div class="pd-section">Layout &amp; Locations</div>';
+    STATE.layoutLocations.forEach(loc => {
+      if (loc.text) h += `<div class="pd-layout"><strong>${esc(loc.label || loc.source)}:</strong> ${esc(loc.text)}</div>`;
+    });
+  }
+
+  // Responsibility matrix
+  if (STATE.responsibilityMatrix && STATE.responsibilityMatrix.length) {
+    h += '<div class="pd-section">Mangia\'s Responsibilities</div>';
+    h += '<div class="pd-resp-grid">';
+    const groups = {};
+    STATE.responsibilityMatrix.forEach(item => {
+      if (!groups[item.group]) groups[item.group] = [];
+      groups[item.group].push(item);
+    });
+    const POSITIVE = ['Y','Mangia','Full clear','Mangia sets','Full service','Prefill only','Assist','Mangia handles','Mangia sets up'];
+    const CLIENT = ['Client provided','Third party','Client','Client handles','Venue sets'];
+    Object.entries(groups).forEach(([gname, items]) => {
+      h += `<div><div class="pd-resp-group-title">${esc(gname)}</div>`;
+      items.forEach(item => {
+        if (item.isReminder) {
+          if (item.value === 'Y') h += `<div class="pd-resp-row"><span class="pd-resp-label">${esc(item.label)}</span><span class="pd-resp-note">Confirm FOH sets</span></div>`;
+          else h += `<div class="pd-resp-row"><span class="pd-resp-label">${esc(item.label)}</span><span class="pd-resp-note">Not on menu</span></div>`;
+          return;
+        }
+        const valClass = POSITIVE.includes(item.value) ? 'pos' : (CLIENT.includes(item.value) ? 'cli' : 'neg');
+        const showVal = item.value || '—';
+        const noteTxt = item.note ? `<span class="pd-resp-note">${esc(item.note)}</span>` : '';
+        h += `<div class="pd-resp-row"><span class="pd-resp-label">${esc(item.label)}</span><span><span class="pd-resp-val ${valClass}">${esc(showVal)}</span>${noteTxt}</span></div>`;
+      });
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+
+  // Diet callouts
+  if (STATE.dietFlags && STATE.dietFlags.length) {
+    const flags = STATE.dietFlags.filter(f => f.text);
+    if (flags.length) {
+      h += `<div class="pd-diet">⚠ FLAGGED DIET / ALLERGY ITEMS — CONFIRM BEFORE SERVICE</div>`;
+    }
+  }
+
+  // Menu
+  if (STATE.menuItems && STATE.menuItems.length) {
+    h += '<div class="pd-section">Menu</div>';
+    h += '<div class="pd-menu-grid">';
+    const half = Math.ceil(STATE.menuItems.length / 2);
+    for (let col = 0; col < 2; col++) {
+      h += '<div>';
+      STATE.menuItems.slice(col * half, col * half + half).forEach(item => {
+        const note = item.notes ? `<span class="pd-menu-note">${esc(item.notes)}</span>` : '';
+        h += `<div class="pd-menu-item"><span>${esc(item.name)}</span>${note}</div>`;
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+
+  // Buffet layout (compact chips, not SVG)
+  const bl = STATE.buffetLayout || {};
+  const hasColds = bl.coldItems && bl.coldItems.length;
+  const hasHots = bl.hotItems && bl.hotItems.length;
+  if (hasColds || hasHots) {
+    h += '<div class="pd-section">Buffet Layout</div>';
+    h += '<div class="pd-buffet">';
+    h += '<span class="pd-buffet-label">Plates →</span>';
+    if (hasColds) {
+      h += '<span class="pd-buffet-label">Cold:</span>';
+      bl.coldItems.forEach(c => {
+        h += `<span class="pd-buffet-chip cold">${esc(c.label)}</span>`;
+      });
+    }
+    if (hasHots) {
+      h += '<span class="pd-buffet-label">Hot:</span>';
+      bl.hotItems.forEach(item => {
+        const cls = item.category || '';
+        h += `<span class="pd-buffet-chip ${esc(cls)}">${esc(item.name)}</span>`;
+      });
+    }
+    h += '</div>';
+  }
+
+  // Staff roster
+  if (STATE.staff && STATE.staff.length) {
+    h += '<div class="pd-section">Staff Roster</div>';
+    h += '<table class="pd-roster"><thead><tr><th>Name</th><th>Role</th><th>Team</th><th>Shift</th><th>Station</th></tr></thead><tbody>';
+    STATE.staff.forEach(s => {
+      const shift = [s.shiftStart, s.shiftEnd].filter(Boolean).join(' – ');
+      h += `<tr><td>${esc(s.name)}</td><td>${esc(s.role)}</td><td>${esc(s.team)}</td><td>${esc(shift)}</td><td>${esc(s.station)}</td></tr>`;
+    });
+    h += '</tbody></table>';
+  }
+
+  // Timeline (compact table)
+  if (STATE.timeline && STATE.timeline.length) {
+    h += '<div class="pd-section">Timeline</div>';
+    h += '<table class="pd-timeline"><thead><tr><th>Time</th><th>Task</th><th>Cat</th><th>Notes</th><th>Team</th><th>Staff</th></tr></thead><tbody>';
+
+    // Sort by time
+    const sorted = [...STATE.timeline].sort((a, b) => {
+      const at = a.timeMinutes != null ? a.timeMinutes : 9999;
+      const bt = b.timeMinutes != null ? b.timeMinutes : 9999;
+      return at - bt;
+    });
+
+    sorted.forEach(item => {
+      const isInfo = (item.style === 'Info');
+      const team = item.team || '';
+      const teamClass = team.includes('FOH') && team.includes('BOH') ? 'pd-tl-all' :
+                        team === 'FOH' ? 'pd-tl-foh' :
+                        team === 'BOH' ? 'pd-tl-boh' :
+                        team === 'Bar' ? 'pd-tl-bar' :
+                        team === 'All' ? 'pd-tl-all' : '';
+      const infoClass = isInfo ? ' pd-tl-info' : '';
+      const catClass = (item.style || 'General').toLowerCase().includes('buffet') ? 'pd-cat-buffet' :
+                       (item.style || 'General').toLowerCase().includes('cocktail') ? 'pd-cat-cocktail' :
+                       isInfo ? 'pd-cat-info' : 'pd-cat-general';
+      const staff = (item.assignedStaff && item.assignedStaff.length) ? esc(item.assignedStaff.join(', ')) : '';
+      const catBadge = (item.style && !isInfo) ? `<span class="pd-cat-badge ${catClass}">${esc(item.style)}</span>` :
+                       isInfo ? `<span class="pd-cat-badge pd-cat-info">Info</span>` : '';
+      h += `<tr class="${teamClass}${infoClass}"><td class="pd-tl-time">${esc(item.time || '—')}</td><td class="pd-tl-task">${esc(item.name)}</td><td class="pd-tl-cat">${catBadge}</td><td class="pd-tl-notes">${esc(item.note || '')}</td><td class="pd-tl-team">${esc(team)}</td><td class="pd-tl-staff">${staff}</td></tr>`;
+    });
+    h += '</tbody></table>';
+  }
+
+  // Reference notes (dense text)
+  if (STATE.refSections && STATE.refSections.length) {
+    h += '<div class="pd-section">Setup &amp; Reference Notes</div>';
+    STATE.refSections.forEach(ref => {
+      if (ref.text && ref.text.trim()) {
+        h += `<div class="pd-ref-title">${esc(ref.name)}</div>`;
+        h += `<div class="pd-ref-body">${esc(ref.text)}</div>`;
+      }
+    });
+  }
+
+  const el = document.getElementById('print-doc');
+  if (el) el.innerHTML = h;
+}
+
+// Wire print events
+window.addEventListener('beforeprint', () => buildPrintDoc());
+window.addEventListener('afterprint', () => {
+  const el = document.getElementById('print-doc');
+  if (el) el.innerHTML = '';
+});
+
+// ============================================================
 // WIRE UP UI
 // ============================================================
 function initUploadZone(zoneId, fileInputId, handler) {
