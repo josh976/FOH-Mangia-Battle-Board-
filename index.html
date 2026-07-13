@@ -71,10 +71,27 @@
 
   /* ---------- Layout shell ---------- */
   .app{max-width:1180px;margin:0 auto;padding:28px 32px 120px;}
+  :root{
+    /* Team color tokens — functional, not decorative */
+    --team-foh: #3B6D11;       /* leafy green — FOH */
+    --team-foh-soft: #E9F0DC;
+    --team-boh: #C9621E;       /* spiced orange — BOH */
+    --team-boh-soft: #FBF0E6;
+    --team-bar: #2E6B9E;       /* steel blue — Bar */
+    --team-bar-soft: #E3EEF7;
+    --team-mixed: #C99A2E;     /* gold — mixed teams */
+    --team-mixed-soft: #FBF3DC;
+  }
+
   .topbar{
     display:flex;align-items:center;justify-content:space-between;
-    gap:24px;padding-bottom:20px;margin-bottom:28px;
+    gap:24px;padding:14px 32px;margin:0 -32px 28px;
     border-bottom:2px solid var(--charcoal);
+    background:var(--paper);
+  }
+  .sticky-topbar{
+    position:sticky;top:0;z-index:100;
+    box-shadow:0 2px 8px rgba(43,41,38,.08);
   }
   .brand{display:flex;align-items:baseline;gap:14px;}
   .brand-wordmark{font-family:var(--serif-display);font-size:30px;font-weight:700;font-style:italic;letter-spacing:.2px;color:var(--charcoal);}
@@ -226,37 +243,68 @@
   .timeline{display:flex;flex-direction:column;}
   .timeline-row{
     display:grid;
-    grid-template-columns:74px 26px 1fr 100px 90px;
+    grid-template-columns:auto 26px 1fr 120px 90px;
     gap:14px;align-items:start;
-    padding:13px 10px;
+    padding:13px 10px 13px 14px;
     border-bottom:1px solid var(--line);
+    border-left:4px solid transparent; /* team color slot */
     position:relative;
   }
   .timeline-row:hover{background:rgba(0,0,0,0.018);}
   .timeline-row.is-highlighted{background:var(--highlight);border-bottom-color:var(--highlight-edge);}
   .timeline-row.is-highlighted:hover{background:var(--highlight);}
-  .timeline-row.is-generated{border-left:3px solid var(--line-strong);padding-left:7px;}
+  .timeline-row.is-generated{opacity:.9;}
   .timeline-row.is-dragging{opacity:.4;}
   .timeline-row.drag-over-top{box-shadow:inset 0 2px 0 var(--charcoal);}
   .timeline-row.drag-over-bottom{box-shadow:inset 0 -2px 0 var(--charcoal);}
 
-  .tl-time{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;padding-top:2px;}
-  .tl-time input{width:100%;font-weight:700;}
+  /* Team color left borders */
+  .timeline-row.team-foh{border-left-color:var(--team-foh);}
+  .timeline-row.team-boh{border-left-color:var(--team-boh);}
+  .timeline-row.team-bar{border-left-color:var(--team-bar);}
+  .timeline-row.team-mixed{border-left-color:var(--team-mixed);}
+  .timeline-row.team-all{border-left-color:var(--charcoal-soft);}
+
+  /* INFO rows — recessed, italic, no left color */
+  .timeline-row.is-info{opacity:.65;background:transparent;}
+  .timeline-row.is-info:hover{opacity:.8;}
+  .tl-name-info{font-style:italic !important;font-weight:400 !important;}
+
+  /* Time field — dynamic width, no cutoff */
+  .tl-time{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;padding-top:2px;min-width:72px;}
+  .tl-time input{font-weight:700;min-width:72px;max-width:110px;}
   .tl-drag{cursor:grab;color:var(--line-strong);font-size:16px;text-align:center;padding-top:2px;user-select:none;}
   .tl-drag:active{cursor:grabbing;}
   .tl-main{min-width:0;}
-  .tl-name-row{display:flex;align-items:center;gap:8px;margin-bottom:2px;}
+  .tl-name-row{display:flex;align-items:center;gap:8px;margin-bottom:2px;flex-wrap:wrap;}
   .tl-name{font-weight:600;font-size:14px;}
   .tl-name input{font-weight:600;font-size:14px;width:100%;}
+
+  /* Style badges — color-coded to match team colors for visual consistency */
   .tl-badge{
     font-size:9.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
     padding:2px 6px;border-radius:3px;border:1px solid var(--charcoal-soft);color:var(--charcoal-soft);
     white-space:nowrap;flex-shrink:0;
   }
+  .tl-badge-buffet{border-color:var(--team-foh);color:var(--team-foh);}
+  .tl-badge-boh,.tl-badge-strike{border-color:var(--team-boh);color:var(--team-boh);}
+  .tl-badge-bar{border-color:var(--team-bar);color:var(--team-bar);}
+  .tl-badge-plated,.tl-badge-passed-apps,.tl-badge-family-style{border-color:var(--team-mixed);color:var(--team-mixed);}
+  .tl-badge-ceremony,.tl-badge-cocktail-hour,.tl-badge-action-stations{border-color:var(--charcoal-soft);color:var(--charcoal-soft);}
+
   .tl-note{font-size:12.5px;color:var(--charcoal-soft);}
   .tl-note textarea,.tl-note input{width:100%;font-size:12.5px;color:var(--charcoal-soft);}
-  .tl-team{font-size:12px;}
+
+  /* Team column: team dropdown + staff assignment stacked */
+  .tl-team{font-size:12px;display:flex;flex-direction:column;gap:4px;}
   .tl-team select{width:100%;}
+  .tl-staff-assign{
+    font-size:11px;width:100%;border:1px solid var(--line);border-radius:4px;
+    padding:3px 6px;background:var(--paper);color:var(--charcoal-soft);
+  }
+  .tl-staff-assign:focus{outline:none;border-color:var(--charcoal-soft);}
+  .tl-staff-assign::placeholder{color:var(--line-strong);}
+
   .tl-actions{display:flex;gap:4px;justify-content:flex-end;padding-top:1px;}
   .icon-btn{
     border:none;background:transparent;color:var(--charcoal-soft);
@@ -266,9 +314,7 @@
   .icon-btn.active{color:var(--highlight-edge);}
   .icon-btn.active:hover{background:var(--highlight);}
 
-  .add-row-btn{
-    margin-top:10px;align-self:flex-start;
-  }
+  .add-row-btn{margin-top:10px;align-self:flex-start;}
 
   /* trigger insert affordance */
   .trigger-chip{
@@ -333,6 +379,38 @@
     #section-attachments{display:none !important;}
   }
 
+  /* ---------- Responsibility matrix (multi-option) ---------- */
+  .resp-reminder{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);}
+  .resp-reminder-inactive{display:flex;align-items:center;gap:8px;padding:5px 0;opacity:.45;border-bottom:1px solid var(--line);}
+  .resp-reminder-flag{color:var(--orange);font-size:16px;flex-shrink:0;}
+  .resp-reminder-note{font-size:11.5px;color:var(--orange);font-weight:600;}
+  .resp-note-dim{color:var(--charcoal-soft);}
+  .resp-label-dim{color:var(--charcoal-soft);}
+
+  /* ---------- Menu section ---------- */
+  .menu-group{margin-bottom:16px;}
+  .menu-group-title{font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;
+    color:var(--charcoal-soft);border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:6px;}
+  .menu-item{display:flex;gap:12px;font-size:13px;padding:3px 0;border-bottom:1px solid var(--line);}
+  .menu-item:last-child{border-bottom:none;}
+  .menu-item-name{flex:1;font-weight:500;}
+  .menu-item-note{color:var(--charcoal-soft);font-size:12px;flex:1.5;}
+
+  /* ---------- Template library ---------- */
+  .tpl-card{border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;}
+  .tpl-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;}
+  .tpl-name{font-size:13px;font-weight:700;}
+  .tpl-trigger-key{font-size:11px;color:var(--charcoal-soft);font-style:italic;}
+  .tpl-steps{display:flex;flex-direction:column;gap:4px;}
+  .tpl-step-row{display:flex;gap:8px;align-items:center;}
+  .tpl-offset{width:54px;font-size:11.5px;text-align:center;}
+  .tpl-step-name{flex:1;font-size:12.5px;}
+  .tpl-step-team{font-size:11px;width:80px;}
+
+  /* ---------- Buffet edit column headers ---------- */
+  .buffet-col-head{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;font-weight:700;
+    color:var(--charcoal-soft);margin-bottom:6px;}
+
   /* ---------- Upload zone ---------- */
   .upload-row{display:flex;gap:12px;flex-wrap:wrap;}
   .upload-zone{
@@ -356,35 +434,105 @@
   }
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
-  /* ---------- Print ---------- */
+  /* ---------- Print — full rebuild ----
+     Goal: compact, scannable field doc. No inputs, no buttons, no edit chrome.
+     Timeline renders as a tight table. Team colors print via print-color-adjust.
+     Target: 2 pages for a typical wedding, 3 for a complex one.
+  ---------------------------------------------------------------- */
   @media print{
-    body{background:#fff;font-size:11px;}
+    *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
+    @page{margin:0.6in 0.5in;}
+    body{background:#fff;font-size:10px;line-height:1.4;}
     .app{max-width:100%;padding:0;}
-    .no-print{display:none !important;}
+
+    /* Hide all screen-only elements */
+    .no-print, .sticky-topbar, #section-import, #section-templates,
+    #section-attachments, .tl-drag, .tl-actions, .trigger-chip,
+    .buffet-edit-list, .resp-auto-tag, .icon-btn,
+    .buffet-edit-row-wrap, .tpl-card, .upload-zone,
+    .attachment-strip, .attachment-empty-hint { display:none !important; }
+
+    /* Show reference sections expanded */
     .ref-body{display:block !important;}
-    .ref-section{break-inside:avoid;border-color:#999;}
-    .timeline-row{break-inside:avoid;padding:7px 6px;}
-    .card{border-color:#999;}
-    .section{margin-bottom:18px;}
-    .timeline-row.is-highlighted{
-      background:var(--highlight) !important;
-      -webkit-print-color-adjust:exact;print-color-adjust:exact;
+    .ref-section{break-inside:avoid;border-color:#ccc;margin-bottom:4px;}
+    .ref-head{padding:5px 8px;font-size:9px;}
+
+    /* Section spacing */
+    .section{margin-bottom:10px;}
+    .section-head{margin-bottom:5px;}
+    .section-eyebrow{font-size:8px;letter-spacing:1.5px;}
+    .section-eyebrow::after{background:#bbb;}
+    .card{border-color:#ccc;border-radius:3px;padding:6px 8px;}
+
+    /* ---- TIMELINE — compact table format ---- */
+    .timeline{display:table;width:100%;border-collapse:collapse;}
+    .timeline-row{
+      display:table-row;
+      border-left:3px solid transparent; /* team color */
+      break-inside:avoid;
     }
-    .topbar{border-bottom-color:#000;}
-    a[href]:after{content:none !important;}
-    #responsibility-body{break-inside:avoid;}
-    .resp-group{break-inside:avoid;}
+    /* Each timeline cell prints as a table cell */
+    .tl-time,.tl-drag,.tl-main,.tl-team,.tl-actions{display:table-cell;vertical-align:top;padding:3px 5px;}
+    .tl-time{width:62px;font-size:10px;font-weight:700;white-space:nowrap;padding-left:4px;}
+    .tl-main{width:auto;}
+    .tl-team{width:70px;font-size:9px;padding-right:4px;}
+
+    /* Hide inputs, show their values as plain text via the input's value attribute */
+    .tl-time input, .tl-name input, .tl-note input, .tl-staff-assign,
+    .tl-team select { display:none; }
+    .tl-time::before{content:attr(data-print-time);font-weight:700;font-size:10px;}
+    .tl-main::before{content:attr(data-print-name);font-weight:600;font-size:11px;display:block;}
+    .tl-main::after{content:attr(data-print-note);font-size:9.5px;color:#555;display:block;}
+    .tl-team::before{content:attr(data-print-team);font-size:9px;color:#444;}
+    .tl-badge{font-size:8px;padding:1px 4px;}
+
+    /* Team colors print */
+    .timeline-row.team-foh{border-left-color:var(--team-foh) !important;}
+    .timeline-row.team-boh{border-left-color:var(--team-boh) !important;}
+    .timeline-row.team-bar{border-left-color:var(--team-bar) !important;}
+    .timeline-row.team-mixed{border-left-color:var(--team-mixed) !important;}
+    /* INFO rows — very light */
+    .timeline-row.is-info{opacity:.5;}
+    /* Highlight stays yellow */
+    .timeline-row.is-highlighted{background:var(--highlight) !important;}
+
+    /* ---- RESPONSIBILITY MATRIX ---- */
+    #responsibility-body{break-inside:avoid;display:grid;grid-template-columns:repeat(2,1fr);gap:0 20px;}
+    .resp-group{break-inside:avoid;margin-bottom:8px;}
+    .resp-group-title{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:#666;padding-bottom:2px;border-bottom:1px solid #ccc;margin-bottom:3px;}
+    .resp-row{display:flex;align-items:center;justify-content:space-between;padding:2px 0;font-size:9.5px;}
+    .resp-toggle{display:flex;gap:2px;}
+    .resp-btn{border:1px solid #aaa;background:#fff;color:#aaa;font-size:8px;padding:1px 5px;border-radius:2px;}
+    .resp-btn.active-y{background:#000 !important;border-color:#000 !important;color:#fff !important;}
+    .resp-btn.active-n{background:#fff !important;border:1.5px solid #000 !important;color:#000 !important;text-decoration:line-through;}
+    /* Show option labels (Mangia/Third party etc.) truncated */
+    .resp-btn{min-width:0;max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+    /* ---- BUFFET DIAGRAM ---- */
     #buffet-body{break-inside:avoid;}
     .buf-table,.buf-cold-item,.buf-plate{stroke:#555 !important;}
-    .buffet-edit-list{display:none;}
-    .resp-btn{border-color:#888;}
-    .resp-btn.active-y{background:#000 !important;border-color:#000 !important;color:#fff !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    .resp-btn.active-n{background:#fff !important;border:1.5px solid #000 !important;color:#000 !important;text-decoration:line-through;}
+    .buffet-svg-wrap{margin-bottom:4px;}
+
+    /* ---- MENU ---- */
+    #section-menu .card{display:grid;grid-template-columns:repeat(2,1fr);gap:0 16px;}
+    .menu-group{break-inside:avoid;}
+    .menu-group-title{font-size:8px;letter-spacing:1px;}
+    .menu-item{font-size:9.5px;}
+    .menu-item-note{font-size:8.5px;}
+
+    /* ---- TOPBAR print header ---- */
+    /* Print a minimal brand header in place of the sticky topbar */
+    .app::before{
+      content:"Mangia Catering Co. — FOH Battle Board";
+      display:block;font-size:11px;font-weight:700;letter-spacing:1px;
+      border-bottom:1.5px solid #000;padding-bottom:4px;margin-bottom:8px;
+    }
+    a[href]:after{content:none !important;}
   }
 
   @media (max-width:860px){
     .meta-grid{grid-template-columns:repeat(2,1fr);}
-    .timeline-row{grid-template-columns:64px 20px 1fr;}
+    .timeline-row{grid-template-columns:auto 20px 1fr;}
     .tl-team,.tl-actions{grid-column:1 / -1;}
   }
 </style>
@@ -392,13 +540,14 @@
 <body>
 <div class="app">
 
-  <div class="topbar no-print">
+  <div class="topbar no-print sticky-topbar">
     <div class="brand">
       <span class="brand-wordmark">Mangia</span>
       <span class="brand-sub">Battle Board</span>
     </div>
     <div class="topbar-actions">
-      <button id="btn-load-json" class="btn-ghost">Load saved JSON</button>
+      <button id="btn-sort-timeline" class="btn-ghost">Sort timeline</button>
+      <button id="btn-load-json" class="btn-ghost">Load JSON</button>
       <button id="btn-export-json" class="btn-ghost">Export JSON</button>
       <button id="btn-print" class="btn-primary">Print / Save PDF</button>
     </div>
@@ -449,6 +598,14 @@
       <div class="section-eyebrow"><span class="section-eyebrow-text">Layout &amp; locations</span></div>
     </div>
     <div class="card" id="layout-body"></div>
+  </div>
+
+  <!-- MENU -->
+  <div class="section" id="section-menu" style="display:none;">
+    <div class="section-head">
+      <div class="section-eyebrow"><span class="section-eyebrow-text">Menu</span></div>
+    </div>
+    <div class="card" id="menu-body"></div>
   </div>
 
   <!-- RESPONSIBILITY MATRIX -->
@@ -513,6 +670,14 @@
       <input type="file" id="file-attachment" accept="image/*" multiple style="display:none">
       <div id="attachment-empty" class="attachment-empty-hint">Reference images — layout photos, venue diagrams. Click to view full size. Not included in print.</div>
     </div>
+  </div>
+
+  <!-- TEMPLATE LIBRARY -->
+  <div class="section no-print" id="section-templates">
+    <div class="section-head">
+      <div class="section-eyebrow"><span class="section-eyebrow-text">Trigger templates &amp; sequences</span></div>
+    </div>
+    <div class="card" id="templates-body"></div>
   </div>
 
   <!-- REFERENCE / SETUP NOTES -->

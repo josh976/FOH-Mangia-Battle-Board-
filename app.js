@@ -8,17 +8,25 @@ const STATE = {
           staffRestrooms:'', staffParking:'' },
   staff: [],
   timeline: [],
+  menuItems: [], // [{name, notes, qty, category}] — parsed food items for display
   dietFlags: [],
   refSections: [], // [{name, text}]
   eventOverview: '',
-  layoutLocations: [], // [{source, text}] — surfaced separately from refSections, staff need this early
-  responsibilityMatrix: [], // [{group,key,label,value,auto,matchedText,matchedSource}]
+  layoutLocations: [], // [{source, text}] — surfaced separately from refSections
+  responsibilityMatrix: [], // [{group,key,label,options,value,auto,matchedText,matchedSource}]
   buffetLayout: {
-    startSide: 'salad',
+    coldItems: [ // editable per-event, defaults to standard cold line
+      { id:'cold_cutlery', label:'Cutlery', shape:'rect' },
+      { id:'cold_butter',  label:'Butter',  shape:'circle' },
+      { id:'cold_bread',   label:'Bread',   shape:'rect-rotated' },
+      { id:'cold_salad',   label:'Salad',   shape:'circle' },
+    ],
     hotItems: [], // [{name, category, notes}] — user-editable order
   },
-  dishLookup: {}, // { [menuItemNameLower]: { dish, servingware, notes } }
-  attachments: [], // [{id, name, dataUrl, type}] — reference images, excluded from print
+  dishLookup: {},
+  attachments: [], // [{id, name, dataUrl}] — reference images, excluded from print
+  alwaysOnApplied: false, // track whether always-on tasks have been inserted this session
+  customTemplates: null, // null = use hardcoded defaults; object = user-edited overrides
 };
 
 let dragSrcId = null;
@@ -99,9 +107,92 @@ const TRIGGER_TEMPLATES = {
       { offset:10, name:'Break down service stations', team:'FOH' },
       { offset:20, name:'Load BOH equipment to truck', team:'BOH' },
       { offset:30, name:'Final site walk — leave area clean', team:'FOH+BOH' },
+      { offset:40, name:'Check out with Captain / BOH Lead before departing', team:'All' },
+    ],
+  },
+  flip_buffet: {
+    label: 'Flip buffet sequence',
+    anchorLabel: 'Flip Buffet',
+    steps: [
+      { offset:-15, name:'Clear cocktail hour setup — apps trays, napkins, décor', team:'FOH' },
+      { offset:-10, name:'Wipe down and reset buffet table surface', team:'FOH' },
+      { offset:-5,  name:'Set dinner buffet layout — linens, serving vessels, labels', team:'FOH' },
+      { offset:0,   name:'Buffet ready for dinner service', team:'FOH' },
     ],
   },
 };
+
+// ============================================================
+// ALWAYS-ON TASKS
+// Inserted automatically on import for events meeting the condition.
+// Generates normal, fully-editable timeline rows same as trigger
+// templates — the "auto" only runs once, at import time.
+// ============================================================
+const ALWAYS_ON_TASKS = [
+  {
+    key: 'serve_bride_groom',
+    name: 'Serve Bride & Groom',
+    note: 'BOH Lead: plate dual proteins, one of each side. Deliver to B&G table before buffet opens to guests.',
+    team: 'BOH',
+    // Condition: wedding occasion AND cook onsite service style
+    condition: (meta) => /wedding/i.test(meta.occasion) && /cook\s*onsite/i.test(meta.serviceStyle),
+    // Timing: T-5 before the first food service row (Buffet Open, Plated, etc.)
+    anchorStyle: ['Buffet', 'Plated', 'Family Style'],
+    offsetMinutes: -5,
+    highlight: true, // auto-highlighted yellow — it's critical
+  },
+];
+
+// Insert always-on tasks into STATE.timeline. Called after worksheet import
+// and after trigger templates have been applied. Safe to call multiple times —
+// checks STATE.alwaysOnApplied to prevent duplicates.
+function applyAlwaysOnTasks() {
+  if (STATE.alwaysOnApplied) return;
+  ALWAYS_ON_TASKS.forEach(task => {
+    if (!task.condition(STATE.meta)) return;
+    // Find the anchor: first timeline row matching anchorStyle
+    const anchor = STATE.timeline.find(t => task.anchorStyle.includes(t.style) && t.timeMinutes != null);
+    if (!anchor) return;
+    const newTime = anchor.timeMinutes + task.offsetMinutes;
+    STATE.timeline.push({
+      id: 'tl_' + Math.random().toString(36).slice(2, 9),
+      name: task.name,
+      time: minutesToTime(newTime),
+      timeMinutes: newTime,
+      note: task.note,
+      style: anchor.style,
+      trigger: null,
+      team: task.team,
+      source: 'always-on',
+      generated: true,
+      highlight: task.highlight || false,
+      assignedStaff: [],
+    });
+  });
+  // Always-on: BOH Lead checkout — every staffed event, always last
+  // Uses the last timeline row's time + 30min as its time
+  if (STATE.timeline.length) {
+    const lastTimed = [...STATE.timeline].filter(t => t.timeMinutes != null)
+      .sort((a, b) => b.timeMinutes - a.timeMinutes)[0];
+    const checkoutTime = lastTimed ? lastTimed.timeMinutes + 30 : null;
+    STATE.timeline.push({
+      id: 'tl_' + Math.random().toString(36).slice(2, 9),
+      name: 'Check out with Captain / BOH Lead',
+      time: checkoutTime ? minutesToTime(checkoutTime) : '',
+      timeMinutes: checkoutTime,
+      note: 'Return name tags, aprons, towels. Sign out of book and Nowsta. Confirm with lead before leaving.',
+      style: 'General',
+      trigger: null,
+      team: 'All',
+      source: 'always-on',
+      generated: true,
+      highlight: false,
+      assignedStaff: [],
+    });
+  }
+  STATE.alwaysOnApplied = true;
+  sortTimelineByTime();
+}
 
 // ---- rate-based duration helper (guest_count x rate ÷ staff_assigned) ----
 // Exposed for the place-settings task and similar scale-dependent items.
@@ -265,8 +356,21 @@ function renderResponsibility() {
 
     items.forEach(item => {
       const row = document.createElement('div');
-      row.className = 'resp-row';
+      // Beverage reminder gets a special flag treatment rather than a toggle
+      if (item.isReminder && item.value === 'Y') {
+        row.className = 'resp-row resp-reminder';
+        row.innerHTML = `<span class="resp-reminder-flag">⚑</span><span class="resp-label">${escapeHtml(item.label)}</span><span class="resp-reminder-note">Confirm FOH sets before service</span>`;
+        groupWrap.appendChild(row);
+        return;
+      }
+      if (item.isReminder) {
+        row.className = 'resp-row resp-reminder-inactive';
+        row.innerHTML = `<span class="resp-label resp-label-dim">${escapeHtml(item.label)}</span><span class="resp-reminder-note resp-note-dim">Not on menu</span>`;
+        groupWrap.appendChild(row);
+        return;
+      }
 
+      row.className = 'resp-row';
       const label = document.createElement('div');
       label.className = 'resp-label';
       label.textContent = item.label;
@@ -279,19 +383,29 @@ function renderResponsibility() {
       }
       row.appendChild(label);
 
+      // Build toggle options from item.options array (supports Y/N and multi-option)
       const toggle = document.createElement('div');
       toggle.className = 'resp-toggle';
-      ['Y','N','—'].forEach(opt => {
+      const opts = item.options || ['Y','N'];
+      // Add "—" (unset) option
+      const allOpts = [...opts, '—'];
+      allOpts.forEach(opt => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'resp-btn' + (
-          (opt === 'Y' && item.value === 'Y') || (opt === 'N' && item.value === 'N') || (opt === '—' && item.value === null)
-            ? ' active-' + (opt === 'Y' ? 'y' : opt === 'N' ? 'n' : 'unset') : ''
-        );
+        const isActive = opt === '—' ? item.value === null : item.value === opt;
+        let activeClass = '';
+        if (isActive) {
+          if (opt === '—') activeClass = ' active-unset';
+          else if (opt === 'Y' || opt === 'Mangia' || opt === 'Full clear' || opt === 'Mangia sets' || opt === 'Full service' || opt === 'Prefill only') activeClass = ' active-y';
+          else if (opt === 'N' || opt === 'Third party' || opt === 'None' || opt === 'Venue sets') activeClass = ' active-n';
+          else activeClass = ' active-y'; // any other affirmative option
+        }
+        btn.className = 'resp-btn' + activeClass;
         btn.textContent = opt;
+        btn.title = opt;
         btn.addEventListener('click', () => {
           item.value = opt === '—' ? null : opt;
-          item.auto = false; // manual override clears the auto provenance
+          item.auto = false;
           renderResponsibility();
         });
         toggle.appendChild(btn);
@@ -305,47 +419,78 @@ function renderResponsibility() {
 
 // ============================================================
 // BUFFET LAYOUT RENDER
-// Real spatial table diagram (cold line + hot line as literal
-// table shapes, matching Mangia's printed buffet drawing
-// template) with a synced plain-list editor beneath it for
-// text/category/order edits. The diagram is regenerated from
-// STATE on every change — it's a view, not a separate state.
+// Real spatial table diagram. Cold line is now per-event editable
+// (same edit-list pattern as hot items). Plates always on the left
+// as guest entry point — guests pick up a plate then move right
+// through cold line, then hot line (veggie → starch → protein).
 // ============================================================
 function renderBuffetLayout() {
   const section = document.getElementById('section-buffet');
   const body = document.getElementById('buffet-body');
   const hasHots = STATE.buffetLayout.hotItems && STATE.buffetLayout.hotItems.length;
+  const hasColds = STATE.buffetLayout.coldItems && STATE.buffetLayout.coldItems.length;
   const isBuffetEvent = /buffet/i.test(STATE.meta.serviceStyle || '') || STATE.timeline.some(t => t.style === 'Buffet');
-  if (!hasHots && !isBuffetEvent) { section.style.display = 'none'; return; }
+  if (!hasHots && !hasColds && !isBuffetEvent) { section.style.display = 'none'; return; }
   section.style.display = '';
   body.innerHTML = '';
 
   body.appendChild(buildBuffetDiagramSVG(STATE.buffetLayout.hotItems));
 
-  // ---- synced edit list (text/category/order/delete) ----
-  const editWrap = document.createElement('div');
-  editWrap.className = 'buffet-edit-list no-print';
+  // ---- Edit lists: cold first, then hot, side by side on screen ----
+  const editRow = document.createElement('div');
+  editRow.className = 'buffet-edit-row-wrap no-print';
+  editRow.style.cssText = 'display:flex;gap:24px;margin-top:12px;border-top:1px solid var(--line);padding-top:12px;';
+
+  // Cold line edit column
+  const coldCol = document.createElement('div');
+  coldCol.style.cssText = 'flex:1;min-width:0;';
+  const coldHead = document.createElement('div');
+  coldHead.className = 'buffet-col-head';
+  coldHead.textContent = 'Cold line items';
+  coldCol.appendChild(coldHead);
+  (STATE.buffetLayout.coldItems || []).forEach((item, idx) => {
+    coldCol.appendChild(renderColdEditRow(item, idx));
+  });
+  const addColdBtn = document.createElement('button');
+  addColdBtn.className = 'btn-sm btn-ghost';
+  addColdBtn.style.marginTop = '6px';
+  addColdBtn.textContent = '+ Add cold item';
+  addColdBtn.addEventListener('click', () => {
+    if (!STATE.buffetLayout.coldItems) STATE.buffetLayout.coldItems = [];
+    STATE.buffetLayout.coldItems.push({ id:'cold_'+Math.random().toString(36).slice(2,7), label:'New item', shape:'rect' });
+    renderBuffetLayout();
+  });
+  coldCol.appendChild(addColdBtn);
+  editRow.appendChild(coldCol);
+
+  // Hot line edit column
+  const hotCol = document.createElement('div');
+  hotCol.style.cssText = 'flex:2;min-width:0;';
+  const hotHead = document.createElement('div');
+  hotHead.className = 'buffet-col-head';
+  hotHead.textContent = 'Hot line items (veggie → starch → protein)';
+  hotCol.appendChild(hotHead);
   if (!hasHots) {
     const empty = document.createElement('div');
     empty.className = 'buffet-hot-empty';
     empty.textContent = 'No hot items detected — add manually below';
-    editWrap.appendChild(empty);
+    hotCol.appendChild(empty);
   } else {
     STATE.buffetLayout.hotItems.forEach((item, idx) => {
-      editWrap.appendChild(renderBuffetEditRow(item, idx));
+      hotCol.appendChild(renderBuffetEditRow(item, idx));
     });
   }
-  body.appendChild(editWrap);
-
-  const addBtn = document.createElement('button');
-  addBtn.className = 'btn-sm btn-ghost no-print';
-  addBtn.style.marginTop = '10px';
-  addBtn.textContent = '+ Add hot item';
-  addBtn.addEventListener('click', () => {
+  const addHotBtn = document.createElement('button');
+  addHotBtn.className = 'btn-sm btn-ghost';
+  addHotBtn.style.marginTop = '6px';
+  addHotBtn.textContent = '+ Add hot item';
+  addHotBtn.addEventListener('click', () => {
     STATE.buffetLayout.hotItems.push({ name: 'New item', category: null, notes: '' });
     renderBuffetLayout();
   });
-  body.appendChild(addBtn);
+  hotCol.appendChild(addHotBtn);
+  editRow.appendChild(hotCol);
+  body.appendChild(editRow);
 
   const note = document.createElement('div');
   note.className = 'buffet-note';
@@ -353,89 +498,148 @@ function renderBuffetLayout() {
   body.appendChild(note);
 }
 
+// Cold line item edit row — simpler than hot (just label + shape + delete)
+function renderColdEditRow(item, idx) {
+  const row = document.createElement('div');
+  row.className = 'buffet-edit-row';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = item.label;
+  nameInput.className = 'buffet-hot-name';
+  nameInput.addEventListener('input', e => { item.label = e.target.value; refreshBuffetDiagramOnly(); });
+  row.appendChild(nameInput);
+  const shapeSel = document.createElement('select');
+  shapeSel.className = 'buffet-hot-cat';
+  [['rect','Rect'],['circle','Round'],['rect-rotated','Basket']].forEach(([v,l]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = l;
+    if (item.shape === v) o.selected = true;
+    shapeSel.appendChild(o);
+  });
+  shapeSel.addEventListener('change', e => { item.shape = e.target.value; renderBuffetLayout(); });
+  row.appendChild(shapeSel);
+  const delBtn = document.createElement('button');
+  delBtn.className = 'icon-btn no-print';
+  delBtn.textContent = '✕';
+  delBtn.addEventListener('click', () => {
+    STATE.buffetLayout.coldItems.splice(idx, 1);
+    renderBuffetLayout();
+  });
+  row.appendChild(delBtn);
+  return row;
+}
+
 const CATEGORY_COLOR_CLASS = { veggie:'cat-veggie', starch:'cat-starch', protein:'cat-protein' };
 const CATEGORY_SVG_FILL = { veggie:'var(--leafy-soft)', starch:'#FBF3DC', protein:'#FBF0E6', null:'var(--paper)' };
 const CATEGORY_SVG_STROKE = { veggie:'var(--leafy)', starch:'var(--gold)', protein:'var(--orange)', null:'var(--line-strong)' };
 
-// ---- builds the visual diagram as a real <svg>, scaling chafer width to item count ----
+// ---- builds the visual diagram as a real <svg> ----
+// Layout direction: guest enters at plates (left), picks up a plate, moves RIGHT
+// through cold line (bread, salad, etc.) then hot line (veggie → starch → protein).
+// Cold items are per-event editable via STATE.buffetLayout.coldItems.
 function buildBuffetDiagramSVG(hotItems) {
   const wrap = document.createElement('div');
   wrap.className = 'buffet-svg-wrap';
 
-  const cold = BUFFET_LAYOUT_DEFAULTS.coldLine;
-  const coldTableW = 280, coldTableX = 55, tableY = 10, tableH = 100;
-  const hotTableX = coldTableX + coldTableW + 40;
-  const itemCount = Math.max(hotItems.length, 1);
-  const hotTableW = Math.max(280, itemCount * 120);
-  const plateX = hotTableX + hotTableW + 35;
-  const totalW = plateX + 60;
+  const coldItems = (STATE.buffetLayout.coldItems || []);
+  const tableY = 10, tableH = 100;
+  const plateW = 50, gap = 35;
 
-  let svg = `<svg class="buffet-diagram" viewBox="0 0 ${totalW} 220" xmlns="http://www.w3.org/2000/svg">`;
+  // Plates section (guest entry point, far left)
+  const plateX = 0;
+  const plateSectionW = plateW + 20;
+
+  // Arrow + cold table
+  const coldTableX = plateSectionW + gap;
+  const coldTableW = Math.max(200, coldItems.length * 68);
+
+  // Arrow + hot table
+  const hotTableX = coldTableX + coldTableW + gap;
+  const hotCount = Math.max(hotItems.length, 1);
+  const hotTableW = Math.max(200, hotCount * 115);
+
+  const totalW = hotTableX + hotTableW + 20;
+
+  let svg = `<svg class="buffet-diagram" viewBox="0 0 ${totalW} 215" xmlns="http://www.w3.org/2000/svg">`;
   svg += `<defs><marker id="bf-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
     <path d="M0,0 L6,3 L0,6 Z" fill="var(--line-strong)"/></marker></defs>`;
 
-  // start label + arrow
-  svg += `<text x="0" y="30" class="buf-start-tag">start</text>
-    <path d="M30,26 L${coldTableX - 7},26" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
+  // Plates — guest START point on the far left
+  svg += `<text x="${plateSectionW/2}" y="130" text-anchor="middle" class="buf-start-tag" style="font-style:normal;font-weight:700;fill:var(--charcoal);">start</text>`;
+  svg += `<circle cx="${plateSectionW/2}" cy="32" r="14" class="buf-plate"/>
+    <circle cx="${plateSectionW/2}" cy="57" r="14" class="buf-plate"/>
+    <circle cx="${plateSectionW/2}" cy="82" r="14" class="buf-plate"/>
+    <text x="${plateSectionW/2}" y="115" text-anchor="middle" class="buf-sublabel">Plates</text>`;
 
-  // cold line table
+  // Arrow plates → cold
+  svg += `<path d="M${plateSectionW},55 L${coldTableX-7},55" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
+
+  // Cold line table — from editable STATE.buffetLayout.coldItems
   svg += `<rect x="${coldTableX}" y="${tableY}" width="${coldTableW}" height="${tableH}" rx="4" class="buf-table"/>`;
-  svg += `<rect x="${coldTableX+10}" y="${tableY+10}" width="55" height="40" rx="2" class="buf-cold-item"/>
-    <text x="${coldTableX+37}" y="${tableY+34}" text-anchor="middle" class="buf-sublabel">Cutlery</text>`;
-  svg += `<circle cx="${coldTableX+95}" cy="${tableY+30}" r="22" class="buf-cold-item"/>
-    <text x="${coldTableX+95}" y="${tableY+34}" text-anchor="middle" class="buf-sublabel">Butter</text>`;
-  svg += `<rect x="${coldTableX+140}" y="${tableY+8}" width="60" height="44" rx="2" class="buf-cold-item" transform="rotate(15 ${coldTableX+170} ${tableY+30})"/>
-    <text x="${coldTableX+170}" y="${tableY+70}" text-anchor="middle" class="buf-sublabel">Bread</text>`;
-  svg += `<circle cx="${coldTableX+245}" cy="${tableY+30}" r="28" class="buf-cold-item"/>
-    <text x="${coldTableX+245}" y="${tableY+34}" text-anchor="middle" class="buf-sublabel">Salad</text>`;
-  svg += `<text x="${coldTableX+coldTableW/2}" y="${tableY+85}" text-anchor="middle" class="buf-section-label">cold line</text>`;
+  if (!coldItems.length) {
+    svg += `<text x="${coldTableX+coldTableW/2}" y="${tableY+55}" text-anchor="middle" class="buf-sublabel" style="font-style:italic;">no cold items</text>`;
+  } else {
+    const cpad = 10, cgap = 6;
+    const cslotW = (coldTableW - cpad*2 - cgap*(coldItems.length-1)) / coldItems.length;
+    coldItems.forEach((ci, i) => {
+      const x = coldTableX + cpad + i * (cslotW + cgap);
+      const cx = x + cslotW/2;
+      const cy = tableY + 30;
+      if (ci.shape === 'circle') {
+        const r = Math.min(22, cslotW/2 - 4);
+        svg += `<circle cx="${cx}" cy="${cy}" r="${r}" class="buf-cold-item"/>`;
+      } else if (ci.shape === 'rect-rotated') {
+        const rw = Math.min(50, cslotW-8), rh = 38;
+        svg += `<rect x="${cx-rw/2}" y="${cy-rh/2}" width="${rw}" height="${rh}" rx="2" class="buf-cold-item" transform="rotate(15 ${cx} ${cy})"/>`;
+      } else {
+        const rw = Math.min(50, cslotW-8);
+        svg += `<rect x="${cx-rw/2}" y="${tableY+10}" width="${rw}" height="38" rx="2" class="buf-cold-item"/>`;
+      }
+      // label below shape
+      const shortLabel = escapeHtml(ci.label).slice(0, 12);
+      svg += `<text x="${cx}" y="${tableY+72}" text-anchor="middle" class="buf-sublabel">${shortLabel}</text>`;
+    });
+  }
+  svg += `<text x="${coldTableX+coldTableW/2}" y="${tableY+87}" text-anchor="middle" class="buf-section-label">cold line</text>`;
 
-  // arrow to hot table
-  svg += `<path d="M${coldTableX+coldTableW},60 L${hotTableX-7},60" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
+  // Arrow cold → hot
+  svg += `<path d="M${coldTableX+coldTableW},55 L${hotTableX-7},55" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
 
-  // hot line table
+  // Hot line table
   svg += `<rect x="${hotTableX}" y="${tableY}" width="${hotTableW}" height="${tableH}" rx="4" class="buf-table"/>`;
   if (!hotItems.length) {
     svg += `<text x="${hotTableX+hotTableW/2}" y="${tableY+55}" text-anchor="middle" class="buf-sublabel" style="font-style:italic;">no hot items yet</text>`;
   } else {
-    const pad = 10, gap = 6;
-    const slotW = (hotTableW - pad*2 - gap*(itemCount-1)) / itemCount;
+    const hpad = 10, hgap = 5;
+    const slotW = (hotTableW - hpad*2 - hgap*(hotCount-1)) / hotCount;
     hotItems.forEach((item, i) => {
-      const x = hotTableX + pad + i * (slotW + gap);
+      const x = hotTableX + hpad + i * (slotW + hgap);
       const fill = CATEGORY_SVG_FILL[item.category] || CATEGORY_SVG_FILL[null];
       const stroke = CATEGORY_SVG_STROKE[item.category] || CATEGORY_SVG_STROKE[null];
       const dash = item.category ? '' : 'stroke-dasharray="4,3"';
       svg += `<rect x="${x}" y="${tableY+10}" width="${slotW}" height="80" rx="2"
         fill="${fill}" stroke="${stroke}" stroke-width="1.5" ${dash}/>`;
-      // wrap name across up to 2 lines, simple char-based wrap
       const words = escapeHtml(item.name).split(' ');
       let lines = [], cur = '';
+      const maxChars = Math.max(8, Math.floor(slotW / 7));
       words.forEach(w => {
-        if ((cur + ' ' + w).trim().length > 14 && cur) { lines.push(cur); cur = w; }
+        if ((cur + ' ' + w).trim().length > maxChars && cur) { lines.push(cur); cur = w; }
         else cur = (cur ? cur + ' ' : '') + w;
       });
       if (cur) lines.push(cur);
       lines = lines.slice(0, 2);
-      const labelYStart = tableY + 50 - (lines.length - 1) * 6;
+      const labelY = tableY + 50 - (lines.length - 1) * 6;
       lines.forEach((line, li) => {
-        svg += `<text x="${x+slotW/2}" y="${labelYStart + li*12}" text-anchor="middle" class="buf-sublabel" style="font-weight:600;">${line}</text>`;
+        svg += `<text x="${x+slotW/2}" y="${labelY + li*12}" text-anchor="middle" class="buf-sublabel" style="font-weight:600;">${line}</text>`;
       });
       svg += `<text x="${x+slotW/2}" y="${tableY+82}" text-anchor="middle" class="buf-sublabel" style="font-size:8px;opacity:.75;">${item.category || '?'}</text>`;
     });
   }
-  svg += `<text x="${hotTableX+hotTableW/2}" y="${tableY+85}" text-anchor="middle" class="buf-section-label">hot line</text>
-    <text x="${hotTableX+hotTableW/2}" y="${tableY+96}" text-anchor="middle" class="buf-sublabel" style="font-size:8.5px;font-style:italic;">veggie &#8594; starch &#8594; protein</text>`;
+  svg += `<text x="${hotTableX+hotTableW/2}" y="${tableY+87}" text-anchor="middle" class="buf-section-label">hot line</text>
+    <text x="${hotTableX+hotTableW/2}" y="${tableY+98}" text-anchor="middle" class="buf-sublabel" style="font-size:8.5px;font-style:italic;">veggie &#8594; starch &#8594; protein (least to most expensive)</text>`;
 
-  // arrow + plates
-  svg += `<path d="M${hotTableX+hotTableW},60 L${plateX-7},60" class="buf-flow-arrow" marker-end="url(#bf-arrow)"/>`;
-  svg += `<circle cx="${plateX+18}" cy="35" r="14" class="buf-plate"/>
-    <circle cx="${plateX+18}" cy="60" r="14" class="buf-plate"/>
-    <circle cx="${plateX+18}" cy="85" r="14" class="buf-plate"/>
-    <text x="${plateX+18}" y="115" text-anchor="middle" class="buf-sublabel">Plates</text>`;
-
-  // guest flow line
-  svg += `<path d="M48,150 C ${totalW*0.3},180 ${totalW*0.6},180 ${totalW-70},150" class="buf-flow-arrow" stroke-dasharray="2,3" marker-end="url(#bf-arrow)"/>
-    <text x="${totalW/2}" y="195" text-anchor="middle" class="buf-sublabel" style="font-style:italic;">guest flow &#8594;</text>`;
+  // Guest flow arc beneath the whole diagram
+  svg += `<path d="M${plateSectionW/2},145 C ${totalW*0.3},175 ${totalW*0.65},175 ${totalW-10},145" class="buf-flow-arrow" stroke-dasharray="2,3" marker-end="url(#bf-arrow)"/>
+    <text x="${totalW/2}" y="193" text-anchor="middle" class="buf-sublabel" style="font-style:italic;">guest flow &#8594;</text>`;
 
   svg += `</svg>`;
   wrap.innerHTML = svg;
@@ -636,9 +840,27 @@ function sortTimelineByTime() {
     .map(x => x.item);
 }
 
+// Team → CSS class for left-border color coding
+const TEAM_COLOR_CLASS = {
+  'FOH': 'team-foh',
+  'BOH': 'team-boh',
+  'Bar': 'team-bar',
+  'FOH+BOH': 'team-mixed',
+  'BOH+FOH': 'team-mixed',
+  'All': 'team-all',
+};
+
 function renderTimelineRow(item) {
+  const isInfo = item.style === 'Info';
+  const teamClass = TEAM_COLOR_CLASS[item.team] || '';
   const row = document.createElement('div');
-  row.className = 'timeline-row' + (item.highlight ? ' is-highlighted' : '') + (item.generated ? ' is-generated' : '');
+  row.className = [
+    'timeline-row',
+    item.highlight ? 'is-highlighted' : '',
+    item.generated ? 'is-generated' : '',
+    isInfo ? 'is-info' : '',
+    teamClass,
+  ].filter(Boolean).join(' ');
   row.draggable = true;
   row.dataset.id = item.id;
 
@@ -672,9 +894,10 @@ function renderTimelineRow(item) {
     renderTimeline();
   });
 
-  // time
+  // time — dynamic width, sort-on-blur
   const tdTime = document.createElement('div');
   tdTime.className = 'tl-time';
+  tdTime.dataset.printTime = item.time || '';
   const timeInput = document.createElement('input');
   timeInput.type = 'text';
   timeInput.value = item.time || '';
@@ -682,13 +905,22 @@ function renderTimelineRow(item) {
   timeInput.addEventListener('input', e => {
     item.time = e.target.value;
     item.timeMinutes = timeToMinutes(e.target.value);
+    // auto-grow the input to content width
+    timeInput.style.width = Math.max(72, timeInput.value.length * 8 + 16) + 'px';
   });
+  timeInput.addEventListener('blur', () => {
+    tdTime.dataset.printTime = timeInput.value;
+    sortTimelineByTime();
+    renderTimeline();
+  });
+  // set initial width to content
+  timeInput.style.width = Math.max(72, (item.time || '').length * 8 + 16) + 'px';
   tdTime.appendChild(timeInput);
   row.appendChild(tdTime);
 
-  // drag handle
+  // drag handle — hidden for INFO rows (less visual noise)
   const tdDrag = document.createElement('div');
-  tdDrag.className = 'tl-drag';
+  tdDrag.className = 'tl-drag' + (isInfo ? ' no-print' : '');
   tdDrag.textContent = '⠿';
   tdDrag.title = 'Drag to reorder';
   row.appendChild(tdDrag);
@@ -696,23 +928,27 @@ function renderTimelineRow(item) {
   // main: name + badge + note
   const tdMain = document.createElement('div');
   tdMain.className = 'tl-main';
+  tdMain.dataset.printName = item.name || '';
+  tdMain.dataset.printNote = item.note || '';
 
   const nameRow = document.createElement('div');
   nameRow.className = 'tl-name-row';
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
-  nameInput.className = 'tl-name';
+  nameInput.className = 'tl-name' + (isInfo ? ' tl-name-info' : '');
   nameInput.value = item.name || '';
   nameInput.addEventListener('input', e => item.name = e.target.value);
   nameRow.appendChild(nameInput);
 
-  const badge = document.createElement('span');
-  badge.className = 'tl-badge';
-  badge.textContent = item.style || 'General';
-  nameRow.appendChild(badge);
+  // Style badge — don't show for Info rows (they're already visually recessed)
+  if (!isInfo) {
+    const badge = document.createElement('span');
+    badge.className = 'tl-badge tl-badge-' + (item.style || 'General').toLowerCase().replace(/[^a-z]/g,'-');
+    badge.textContent = item.style || 'General';
+    nameRow.appendChild(badge);
+  }
 
-  // trigger chip — only on imported rows with a matched trigger that hasn't
-  // had its template inserted yet
+  // Trigger chip
   if (item.trigger && TRIGGER_TEMPLATES[item.trigger] && !item.triggerApplied) {
     const chip = document.createElement('span');
     chip.className = 'trigger-chip no-print';
@@ -725,29 +961,54 @@ function renderTimelineRow(item) {
   }
   tdMain.appendChild(nameRow);
 
+  // Note field
   const noteWrap = document.createElement('div');
   noteWrap.className = 'tl-note';
   const noteInput = document.createElement('input');
   noteInput.type = 'text';
   noteInput.value = item.note || '';
-  noteInput.placeholder = 'Notes / instructions';
+  noteInput.placeholder = isInfo ? '' : 'Notes / instructions';
   noteInput.addEventListener('input', e => item.note = e.target.value);
   noteWrap.appendChild(noteInput);
   tdMain.appendChild(noteWrap);
 
   row.appendChild(tdMain);
 
-  // team
+  // team + staff assignment (combined column)
   const tdTeam = document.createElement('div');
   tdTeam.className = 'tl-team';
-  const teamSel = document.createElement('select');
-  ['','FOH','BOH','Bar','FOH+BOH','BOH+FOH','All'].forEach(t => {
-    const o = document.createElement('option'); o.value = t; o.textContent = t || '—';
-    if ((item.team || '') === t) o.selected = true;
-    teamSel.appendChild(o);
-  });
-  teamSel.addEventListener('change', e => item.team = e.target.value);
-  tdTeam.appendChild(teamSel);
+  tdTeam.dataset.printTeam = (item.team || '') + (item.assignedStaff && item.assignedStaff.length ? '\n' + item.assignedStaff.join(', ') : '');
+
+  if (!isInfo) {
+    // Team dropdown
+    const teamSel = document.createElement('select');
+    ['','FOH','BOH','Bar','FOH+BOH','BOH+FOH','All'].forEach(t => {
+      const o = document.createElement('option'); o.value = t; o.textContent = t || '—';
+      if ((item.team || '') === t) o.selected = true;
+      teamSel.appendChild(o);
+    });
+    teamSel.addEventListener('change', e => {
+      item.team = e.target.value;
+      // update row color class immediately without full re-render
+      Object.values(TEAM_COLOR_CLASS).forEach(c => row.classList.remove(c));
+      if (TEAM_COLOR_CLASS[item.team]) row.classList.add(TEAM_COLOR_CLASS[item.team]);
+    });
+    tdTeam.appendChild(teamSel);
+
+    // Staff name assignment — optional text field, comma-separated names
+    // Pulled from loaded roster as a datalist for autocomplete
+    const staffInput = document.createElement('input');
+    staffInput.type = 'text';
+    staffInput.className = 'tl-staff-assign';
+    staffInput.placeholder = 'Assign staff...';
+    staffInput.value = (item.assignedStaff || []).join(', ');
+    staffInput.list = 'staff-names-list';
+    staffInput.addEventListener('blur', e => {
+      item.assignedStaff = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+    });
+    tdTeam.appendChild(staffInput);
+  }
+
   row.appendChild(tdTeam);
 
   // actions
@@ -931,25 +1192,52 @@ function handleWorksheetFile(file) {
   reader.onload = (e) => {
     try {
       const result = parseEventWorksheet(e.target.result);
+
+      // Safety check: if the parse produced almost nothing, the user may have
+      // uploaded a Proposal CSV instead of a Worksheet CSV. Warn loudly rather
+      // than silently show an empty board — an empty board on event day is dangerous.
+      if (result.timeline.length === 0 && result.food.items.length === 0) {
+        toast('⚠ This file looks like a Proposal export, not an Event Worksheet. Upload the Worksheet CSV instead.');
+        return;
+      }
+
       STATE.meta = { ...STATE.meta, ...result.meta };
-      STATE.timeline = result.timeline.map(t => ({ ...t, team:'', generated:false, triggerApplied:false }));
+      STATE.timeline = result.timeline.map(t => ({
+        ...t, team:'', generated:false, triggerApplied:false, assignedStaff:[],
+      }));
       sortTimelineByTime();
       STATE.dietFlags = result.dietFlags;
+      STATE.menuItems = result.food.items.map(i => ({
+        name: i.name, notes: i.notes || '', qty: i.qty || '',
+        description: i.description || '',
+      }));
       STATE.refSections = Object.entries(result.freeText)
-        .filter(([name]) => name !== 'Event Overview' && name !== 'Service Setup / Layout')
-        // Event Overview promoted to its own section; Service Setup / Layout
-        // promoted into the new Layout & Locations section below — both
-        // excluded here so they're not ALSO sitting in the generic
-        // collapsed accordion, which would just be confusing duplication.
+        .filter(([name]) =>
+          name !== 'Event Overview' &&
+          name !== 'Service Setup / Layout' &&
+          name !== 'Setup' &&              // promoted to Layout & Locations
+          name !== 'Catering Kitchen / Staging' // promoted to Layout & Locations
+        )
         .map(([name, text]) => ({ name, text }));
       STATE.eventOverview = result.eventOverview || '';
       STATE.layoutLocations = result.layoutLocations || [];
       STATE.responsibilityMatrix = result.responsibilityMatrix || [];
       STATE.buffetLayout.hotItems = result.buffetHotItems || [];
+      // Reset cold items to defaults on new import (user can edit after)
+      STATE.buffetLayout.coldItems = [
+        { id:'cold_cutlery', label:'Cutlery',   shape:'rect' },
+        { id:'cold_butter',  label:'Butter',    shape:'circle' },
+        { id:'cold_bread',   label:'Bread',     shape:'rect-rotated' },
+        { id:'cold_salad',   label:'Salad',     shape:'circle' },
+      ];
+      STATE.alwaysOnApplied = false;
+      applyAlwaysOnTasks();
+
       renderAll();
       document.getElementById('zone-worksheet').classList.add('loaded');
       document.getElementById('zone-worksheet').querySelector('.upload-zone-sub').textContent = file.name;
-      toast('Worksheet imported — ' + STATE.timeline.length + ' timeline rows loaded');
+      const rowCount = STATE.timeline.length;
+      toast('Worksheet imported — ' + rowCount + ' timeline rows loaded');
     } catch (err) {
       console.error(err);
       toast('Could not parse that file — check it is a Worksheet CSV export');
@@ -1013,15 +1301,178 @@ function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ============================================================
+// MENU SECTION RENDER
+// Shows parsed food items in a clean two-column list, grouped
+// by course header (Cocktail Hour, Dinner Buffet, etc.) where
+// detectable. Staff need to know what they're serving.
+// ============================================================
+function renderMenu() {
+  const section = document.getElementById('section-menu');
+  const body = document.getElementById('menu-body');
+  if (!section || !body) return;
+  if (!STATE.menuItems || !STATE.menuItems.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  body.innerHTML = '';
+
+  const COURSE_HEADER_PATTERNS = /^(cocktail\s*hour|dinner\s*buffet|buffet|plated|salad\s*course|dessert|appetizers?|entrée|entree|beverages?)/i;
+  let currentGroup = null;
+
+  STATE.menuItems.forEach(item => {
+    if (COURSE_HEADER_PATTERNS.test(item.name.trim()) && !item.qty) {
+      // This is a section header row, not an actual food item
+      currentGroup = document.createElement('div');
+      currentGroup.className = 'menu-group';
+      const heading = document.createElement('div');
+      heading.className = 'menu-group-title';
+      heading.textContent = item.name;
+      currentGroup.appendChild(heading);
+      body.appendChild(currentGroup);
+      return;
+    }
+    if (!currentGroup) {
+      currentGroup = document.createElement('div');
+      currentGroup.className = 'menu-group';
+      body.appendChild(currentGroup);
+    }
+    const row = document.createElement('div');
+    row.className = 'menu-item';
+    const name = document.createElement('span');
+    name.className = 'menu-item-name';
+    name.textContent = item.name;
+    row.appendChild(name);
+    if (item.notes && item.notes.trim()) {
+      const note = document.createElement('span');
+      note.className = 'menu-item-note';
+      note.textContent = item.notes;
+      row.appendChild(note);
+    }
+    currentGroup.appendChild(row);
+  });
+}
+
+// ============================================================
+// TEMPLATE LIBRARY UI
+// Collapsible panel showing all trigger templates and always-on
+// tasks. Read-only list with inline step editing. STATE-backed —
+// customTemplates overrides defaults when set, travels with JSON.
+// ============================================================
+function renderTemplateLibrary() {
+  const section = document.getElementById('section-templates');
+  const body = document.getElementById('templates-body');
+  if (!section || !body) return;
+  // Template library is always visible (it's a utility panel, not data-driven)
+  section.style.display = '';
+  body.innerHTML = '';
+
+  const templates = STATE.customTemplates || TRIGGER_TEMPLATES;
+  Object.entries(templates).forEach(([key, tpl]) => {
+    const card = document.createElement('div');
+    card.className = 'tpl-card';
+
+    const head = document.createElement('div');
+    head.className = 'tpl-head';
+    head.innerHTML = `<span class="tpl-name">${escapeHtml(tpl.label)}</span>
+      <span class="tpl-trigger-key">fires on: ${escapeHtml(tpl.anchorLabel || key)}</span>`;
+    card.appendChild(head);
+
+    const steps = document.createElement('div');
+    steps.className = 'tpl-steps';
+    (tpl.steps || []).forEach((step, si) => {
+      const stepRow = document.createElement('div');
+      stepRow.className = 'tpl-step-row';
+      // Offset input
+      const offsetInput = document.createElement('input');
+      offsetInput.type = 'number';
+      offsetInput.className = 'tpl-offset';
+      offsetInput.value = step.offset;
+      offsetInput.title = 'Offset in minutes from trigger time';
+      offsetInput.addEventListener('change', e => {
+        ensureCustomTemplates();
+        STATE.customTemplates[key].steps[si].offset = parseInt(e.target.value, 10) || 0;
+      });
+      stepRow.appendChild(offsetInput);
+
+      const stepName = document.createElement('input');
+      stepName.type = 'text';
+      stepName.className = 'tpl-step-name';
+      stepName.value = step.name;
+      stepName.addEventListener('input', e => {
+        ensureCustomTemplates();
+        STATE.customTemplates[key].steps[si].name = e.target.value;
+      });
+      stepRow.appendChild(stepName);
+
+      const teamSel = document.createElement('select');
+      teamSel.className = 'tpl-step-team';
+      ['FOH','BOH','Bar','FOH+BOH','BOH+FOH','All'].forEach(t => {
+        const o = document.createElement('option'); o.value = t; o.textContent = t;
+        if (step.team === t) o.selected = true;
+        teamSel.appendChild(o);
+      });
+      teamSel.addEventListener('change', e => {
+        ensureCustomTemplates();
+        STATE.customTemplates[key].steps[si].team = e.target.value;
+      });
+      stepRow.appendChild(teamSel);
+
+      steps.appendChild(stepRow);
+    });
+    card.appendChild(steps);
+
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'btn-sm btn-ghost no-print';
+    resetBtn.style.marginTop = '6px';
+    resetBtn.textContent = 'Reset to default';
+    resetBtn.addEventListener('click', () => {
+      if (STATE.customTemplates) delete STATE.customTemplates[key];
+      if (STATE.customTemplates && !Object.keys(STATE.customTemplates).length) STATE.customTemplates = null;
+      renderTemplateLibrary();
+    });
+    card.appendChild(resetBtn);
+
+    body.appendChild(card);
+  });
+}
+
+// Deep-clone TRIGGER_TEMPLATES into STATE.customTemplates if not already set,
+// so edits don't mutate the hardcoded defaults.
+function ensureCustomTemplates() {
+  if (!STATE.customTemplates) {
+    STATE.customTemplates = JSON.parse(JSON.stringify(TRIGGER_TEMPLATES));
+  }
+}
+
+// Update the staff name datalist used for assignment autocomplete
+function updateStaffDatalist() {
+  let list = document.getElementById('staff-names-list');
+  if (!list) {
+    list = document.createElement('datalist');
+    list.id = 'staff-names-list';
+    document.body.appendChild(list);
+  }
+  list.innerHTML = '';
+  (STATE.staff || []).forEach(s => {
+    if (s.name && s.name.trim()) {
+      const opt = document.createElement('option');
+      opt.value = s.name.trim();
+      list.appendChild(opt);
+    }
+  });
+}
+
 function renderAll() {
   renderMeta();
   renderOverview();
   renderLayoutLocations();
+  renderMenu();
   renderResponsibility();
   renderDiet();
+  updateStaffDatalist();
   renderRoster();
   renderTimeline();
   renderBuffetLayout();
+  renderTemplateLibrary();
   renderAttachments();
   renderRef();
 }
@@ -1064,10 +1515,28 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-add-row').addEventListener('click', () => {
     STATE.timeline.push({
       id:'tl_'+Math.random().toString(36).slice(2,9), name:'New task', time:'', timeMinutes:null,
-      note:'', style:'General', trigger:null, team:'', source:'manual', generated:false, highlight:false,
+      note:'', style:'General', trigger:null, team:'', source:'manual', generated:false,
+      highlight:false, assignedStaff:[],
     });
+    // Auto-sort so new row lands in chronological position if it has a time,
+    // or stays at end if no time yet — user types the time and blur-sorts.
+    sortTimelineByTime();
     renderTimeline();
+    // scroll to show the newly added row
+    setTimeout(() => {
+      const lastRow = document.querySelector('.timeline-row:last-child');
+      if (lastRow) lastRow.scrollIntoView({ behavior:'smooth', block:'nearest' });
+    }, 50);
   });
+
+  const sortBtn = document.getElementById('btn-sort-timeline');
+  if (sortBtn) {
+    sortBtn.addEventListener('click', () => {
+      sortTimelineByTime();
+      renderTimeline();
+      toast('Timeline sorted by time');
+    });
+  }
 
   const overviewBody = document.getElementById('overview-body');
   overviewBody.addEventListener('input', e => {
@@ -1079,7 +1548,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-add-attachment').addEventListener('click', () => attachmentInput.click());
   attachmentInput.addEventListener('change', e => {
     if (e.target.files.length) handleAttachmentFiles(e.target.files);
-    attachmentInput.value = ''; // allow re-selecting the same file later
+    attachmentInput.value = '';
   });
   document.getElementById('attachment-modal-close').addEventListener('click', closeAttachmentModal);
   document.querySelector('.attachment-modal-backdrop').addEventListener('click', closeAttachmentModal);

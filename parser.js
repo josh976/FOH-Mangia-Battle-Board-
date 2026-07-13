@@ -192,41 +192,65 @@ function minutesToTime(mins) {
 }
 
 // Style guess used for structural (non-color) tagging — badges, not colors.
-// These map to Mangia's actual service-style vocabulary (matches the
-// "Service Style" field on the worksheet header: Buffet, Plated, Family
-// Style, Action Stations, Passed Apps, Cocktail Hour, Bar) rather than a
-// collapsed catch-all. Order matters — more specific patterns first so
-// e.g. "Action Station" doesn't fall through to the generic Cocktail Hour
-// match before the Action Stations check runs.
+// INFO rows are timeline anchors with no Mangia action (Ceremony Start,
+// Grand Entrance, etc.) — visually recessed on screen and print so staff
+// can scan past them quickly. Checked FIRST so e.g. "Ceremony Start" never
+// falls through to a generic catch-all. Order matters throughout.
+const INFO_PATTERNS = [
+  /^ceremony\s*(start|end|begins?)/i,
+  /^first\s*dance/i,
+  /^father.daughter|^mother.son/i,
+  /^grand\s*entrance/i,
+  /^toasts?$/i,
+  /^reception\s*start/i,
+  /^social\s*hour\s*(start|end)/i,
+  /^(wedding|event)\s*(start|end)$/i,
+  /^done\s*for\s*day$/i,
+  /^rtb$/i,
+  /^venue\s*access$/i,
+  /^send\s*off$/i,
+  /^(bride\s*and\s*groom|couple)\s*(enter|entrance|arrive)/i,
+  // Logistics/admin rows — not FOH action items
+  /^staff\s*schedule\s*(on|off)$/i,
+  /^event\s*staff\s*schedule\s*off$/i,
+];
+function isInfoRow(name) {
+  return INFO_PATTERNS.some(re => re.test(name.trim()));
+}
+
 const STYLE_PATTERNS = [
   [/buffet/i, 'Buffet'],
+  [/flip\s*buffet/i, 'Buffet'],
   [/action\s*station/i, 'Action Stations'],
   [/\bbar\b/i, 'Bar'],
   [/passed\s*apps?|passed\s*hors/i, 'Passed Apps'],
-  [/cocktail\s*hour/i, 'Cocktail Hour'],
+  [/cocktail\s*hour|social\s*hour|happy\s*hour/i, 'Cocktail Hour'],
   [/family\s*style/i, 'Family Style'],
   [/plated|^serve\b|served\b/i, 'Plated'],
   [/ceremony/i, 'Ceremony'],
   [/strike|bussing|breakdown/i, 'Strike'],
 ];
 function guessStyle(name) {
+  if (isInfoRow(name)) return 'Info';
   for (const [re, label] of STYLE_PATTERNS) if (re.test(name)) return label;
   return 'General';
 }
 
-// Trigger matching — keyed to recognized row-name patterns, drives template injection
+// Trigger matching — keyed to recognized row-name patterns, drives template injection.
+// Strike trigger broadened: matches "Strike Start", "Strike End", "Final Bussing" etc.
 const TRIGGER_PATTERNS = [
   [/buffet open/i, 'buffet_open'],
+  [/flip\s*buffet/i, 'flip_buffet'],
   [/buffet close/i, 'buffet_close'],
   [/bar start/i, 'bar_start'],
   [/bar end/i, 'bar_end'],
-  [/cocktail hour start/i, 'stations_start'],
-  [/cocktail hour end/i, 'stations_end'],
-  [/final bussing|^strike$/i, 'final_strike'],
+  [/cocktail hour start|social hour start|happy hour start/i, 'stations_start'],
+  [/cocktail hour end|social hour end|happy hour end/i, 'stations_end'],
+  [/final bussing|strike\s*(start|begin)?$|^strike$/i, 'final_strike'],
   [/all tables set and ready/i, 'place_settings_check'],
 ];
 function matchTrigger(name) {
-  for (const [re, key] of TRIGGER_PATTERNS) if (re.test(name)) return key;
+  for (const [re, key] of TRIGGER_PATTERNS) if (re.test(name.trim())) return key;
   return null;
 }
 
@@ -300,19 +324,43 @@ function extractDietFlags(foodItems, freeTextSections) {
 
 // ---- Layout & Locations extraction ----
 // Staff need "where does stuff go" surfaced prominently, not buried in the
-// generic collapsed reference accordion alongside Bar Overview/Decor/Equipment.
-// Pulls the Service Setup / Layout section wholesale (it's already
-// location-focused by nature) plus any location-flavored lines from
-// Operations Notes (which mixes location info with unrelated logistics
-// like power/water availability — only the location-flavored lines get
-// pulled out, the rest stays in Operations Notes where it belongs).
-const LOCATION_KEYWORDS = /\b(set up|setup|located?|location|along the|near the|side of|end of|wall|fence|driveway|garage|passthrough|park(ing)?|sw |ne |nw |se )\b/i;
+// generic collapsed reference accordion. Pulls Service Setup / Layout wholesale,
+// plus location-flavored content from Setup (corporate events use this section
+// instead of Service Setup / Layout), Operations Notes, and Catering Kitchen /
+// Staging. Location keywords are broad enough to catch distance-to-venue,
+// security/badge access, and physical logistics notes that staff need before
+// they arrive — not just furniture placement.
+const LOCATION_KEYWORDS = /\b(set up|setup|located?|location|along the|near the|side of|end of|wall|fence|driveway|garage|passthrough|park(ing)?|sw |ne |nw |se |stair|entrance|access|security|badge|kitchen|scullery|field kitchen|stage|tent|outside|inside|adjacent|floor|room|building|hour drive|min(ute)?s? drive|from hq|from shop)\b/i;
+
 function extractLayoutLocations(freeTextSections) {
   const parts = [];
+
+  // Service Setup / Layout — always pulled wholesale (most common location section)
   const layoutSection = freeTextSections['Service Setup / Layout'];
   if (layoutSection && layoutSection.trim()) {
     parts.push({ source: 'Service Setup / Layout', text: layoutSection.trim() });
   }
+
+  // Setup — corporate events often put arrival/security/layout info here instead
+  const setupSection = freeTextSections['Setup'];
+  if (setupSection && setupSection.trim()) {
+    // Pull location-flavored lines only (Setup can contain non-location content
+    // like "Rentals: none", "Decor: black linens" — filter those out)
+    const locationLines = setupSection.split('\n')
+      .map(l => l.trim())
+      .filter(l => l && LOCATION_KEYWORDS.test(l));
+    if (locationLines.length) {
+      parts.push({ source: 'Setup', text: locationLines.join('\n') });
+    }
+  }
+
+  // Catering Kitchen / Staging — almost always has location-critical info
+  const kitchenSection = freeTextSections['Catering Kitchen / Staging'];
+  if (kitchenSection && kitchenSection.trim()) {
+    parts.push({ source: 'Catering Kitchen / Staging', text: kitchenSection.trim() });
+  }
+
+  // Operations Notes — pull location-flavored lines only (mixed content section)
   const opsNotes = freeTextSections['Operations Notes'];
   if (opsNotes) {
     const locationLines = opsNotes.split('\n')
@@ -322,7 +370,8 @@ function extractLayoutLocations(freeTextSections) {
       parts.push({ source: 'Operations Notes', text: locationLines.join('\n') });
     }
   }
-  return parts; // [{source, text}] — empty array if nothing location-flavored found
+
+  return parts; // [{source, text}]
 }
 
 
@@ -443,7 +492,7 @@ function parseEventWorksheet(csvText) {
   }
 
   result.dietFlags = extractDietFlags(result.food.items, result.freeText);
-  result.responsibilityMatrix = buildResponsibilityMatrix(result.freeText, result.timeline);
+  result.responsibilityMatrix = buildResponsibilityMatrix(result.freeText, result.timeline, result.food.items);
   result.eventOverview = result.freeText['Event Overview'] || '';
   result.buffetHotItems = buildBuffetLayoutSuggestion(result.food.items);
   result.layoutLocations = extractLayoutLocations(result.freeText);
@@ -461,94 +510,91 @@ function parseEventWorksheet(csvText) {
 // (matchedText) so it's auditable, not a black box, and is always
 // manually overridable in the UI.
 // ============================================================
+// Restructured matrix: 3 groups answering the real questions staff ask
+// at a glance. Trimmed from 22 items to 13 focused, actionable ones.
+// Three-way options (Mangia/Third party/None) replace simple Y/N where
+// the distinction actually matters for staff behavior.
+// ============================================================
 const RESPONSIBILITY_MATRIX_TEMPLATE = [
-  { group: 'Setup', key: 'setup_guest_tables', label: 'Setup guest tables/chairs' },
-  { group: 'Setup', key: 'setup_flatware_china', label: 'Setting tables with flatware/china' },
-  { group: 'Setup', key: 'prefill_water_goblets', label: 'Prefill water goblets tableside' },
-  { group: 'Setup', key: 'tableside_water_service', label: 'Tableside water service' },
-  { group: 'Setup', key: 'setup_buffet_tables', label: 'Setup buffet tables for buffet' },
-  { group: 'Setup', key: 'setup_app_tables', label: 'Setup tables for appetizers' },
-  { group: 'Setup', key: 'setup_bev_tables', label: 'Setup table for beverages' },
-  { group: 'Setup', key: 'mangia_disposables', label: 'Mangia disposables' },
-  { group: 'Setup', key: 'event_rentals', label: 'Event rentals' },
-  { group: 'Appetizers', key: 'apps_stationary', label: 'Stationary apps' },
-  { group: 'Appetizers', key: 'apps_own_table', label: 'Apps on their own table' },
-  { group: 'Appetizers', key: 'apps_main_buffet', label: 'Apps using main buffet table' },
-  { group: 'Appetizers', key: 'apps_passed', label: 'Pass apps' },
-  { group: 'Main Service', key: 'bev_dispensers', label: 'Set out beverage dispensers' },
-  { group: 'Main Service', key: 'bar_service', label: 'Bar service' },
-  { group: 'Main Service', key: 'serving_buffet', label: 'Serving buffet' },
-  { group: 'Main Service', key: 'self_serve_buffet', label: 'Self serve buffet' },
-  { group: 'Main Service', key: 'bus_after_dinner', label: 'Bus after dinner service (plates, silverware, napkins)' },
-  { group: 'Main Service', key: 'full_bus', label: 'Full bus (clear ALL glassware at end of event)' },
-  { group: 'Dessert', key: 'setup_dessert', label: 'Setup cake / dessert' },
-  { group: 'Dessert', key: 'cut_serve_dessert', label: 'Cut cake / Serve dessert' },
-  { group: 'Dessert', key: 'dessert_coffee_bar', label: 'Dessert Coffee Bar' },
+  // SCOPE — who's doing what (the "don't touch that" vs "that's ours" answers)
+  { group: 'Scope', key: 'bar_service',       label: 'Bar service',                options: ['Mangia','Third party','None'] },
+  { group: 'Scope', key: 'cocktail_food',     label: 'Cocktail hour food',          options: ['Mangia','Third party','None'] },
+  { group: 'Scope', key: 'dessert',           label: 'Dessert',                     options: ['Mangia','Third party','None'] },
+  { group: 'Scope', key: 'bussing',           label: 'Bussing',                     options: ['Full clear','Mangia only','None'] },
+  { group: 'Scope', key: 'place_settings',    label: 'Place settings',              options: ['Mangia sets','Venue sets','None'] },
+  // SERVICE — how we're running it
+  { group: 'Service', key: 'apps_passed',         label: 'Passed apps',             options: ['Y','N'] },
+  { group: 'Service', key: 'apps_stationary',     label: 'Stationary apps',         options: ['Y','N'] },
+  { group: 'Service', key: 'beverages_reminder',  label: 'Beverages on menu',       options: ['Y','N'], isReminder: true },
+  { group: 'Service', key: 'water_service',       label: 'Tableside water',         options: ['Prefill only','Full service','None'] },
+  // LOGISTICS — what we're working with
+  { group: 'Logistics', key: 'mangia_disposables', label: 'Mangia disposables',     options: ['Y','N'] },
+  { group: 'Logistics', key: 'event_rentals',      label: 'Event rentals',          options: ['Y','N'] },
+  { group: 'Logistics', key: 'power_onsite',       label: 'Power onsite',           options: ['Y','N'] },
+  { group: 'Logistics', key: 'water_onsite',       label: 'Water onsite',           options: ['Y','N'] },
 ];
 
-// Each rule: a regex tested against a window of text around any match,
-// the matrix key it's allowed to set, the value it sets, and whether
-// the rule requires the match to be specifically ABOUT that task
-// (vs. a generic catch-all that could misfire). Order matters — more
-// specific/negative rules run first so e.g. "self serve bar" doesn't
-// also get caught by a generic "bar" = Y rule.
 const RESPONSIBILITY_RULES = [
-  // Bar — third-party / self-serve = Mangia does NOT run it.
-  // We deliberately do NOT auto-set bar_service=Y from any positive-mention
-  // pattern: "bar service", "bar start" etc. show up in too many generic
-  // sentences (planner contact info, bar overview prose) that don't actually
-  // confirm Mangia operates it. Leave Y unset for manual call; only the
-  // unambiguous N case (self-serve / third-party) is safe to auto-fill.
-  { key: 'bar_service', value: 'N', re: /self\s*serve\s*bar|third[\s-]?party\s*bar|3rd\s*party\s*bar/i },
+  // Bar — self-serve / third-party = "Third party". Mangia-run bar needs manual call.
+  { key: 'bar_service', value: 'Third party', re: /self\s*serve\s*bar|third[\s-]?party\s*bar|3rd\s*party\s*bar|no\s*mangia\s*bar/i },
 
-  // Full bus
-  { key: 'full_bus', value: 'Y', re: /full\s*bus(s)?\b/i },
+  // Cocktail hour food — client provided or third party = "Third party"
+  { key: 'cocktail_food', value: 'Third party', re: /client\s*provided.*(cocktail|apps)|third[\s-]?party.*(cocktail|apps|charcuterie)|3rd\s*party.*(cocktail|apps)/i },
+  { key: 'cocktail_food', value: 'Mangia',       re: /mangia.*(cocktail\s*hour|passed\s*apps|stationary\s*apps)/i },
 
-  // Bus after dinner
-  { key: 'bus_after_dinner', value: 'Y', re: /\bbuss?\s*mangia\s*disposables\b/i },
+  // Dessert
+  { key: 'dessert', value: 'Third party', re: /third[\s-]?party.*dessert|3rd\s*party.*dessert|client.*dessert|no\s*mangia.*dessert|client\s*handled\s*cake/i },
+  { key: 'dessert', value: 'Mangia',      re: /mangia.*dessert|cut\s*cake|serve\s*dessert/i },
 
-  // Cocktail hour / apps — third party = N, otherwise infer style from worksheet language
-  { key: 'apps_passed', value: 'N', re: /third[\s-]?party.*(apps|appetizer)|3rd\s*party.*(apps|appetizer)|client\s*provided.*(cocktail\s*hour|apps)/i },
-  { key: 'apps_passed', value: 'Y', re: /passed\s*apps?/i },
-  { key: 'apps_stationary', value: 'Y', re: /stationary\s*apps?|station(ary)?\s*app\s*table/i },
+  // Bussing
+  { key: 'bussing', value: 'Full clear',   re: /full\s*bus(s)?\b|full\s*clear|clear\s*all/i },
+  { key: 'bussing', value: 'Mangia only',  re: /\bbuss?\s*mangia\s*disposables|clear\s*mangia\s*disposables|mangia\s*disposables\s*only/i },
 
-  // Dessert — third party = N across all dessert sub-tasks
-  { key: 'setup_dessert', value: 'N', re: /third[\s-]?party.*dessert|3rd\s*party.*dessert|no\s*mangia\s*service.*dessert/i },
-  { key: 'cut_serve_dessert', value: 'N', re: /third[\s-]?party.*dessert|3rd\s*party.*dessert|no\s*mangia\s*service.*dessert/i },
+  // Place settings
+  { key: 'place_settings', value: 'Venue sets', re: /venue\s*setting\s*tables|no\s*pre\s*set\s*place\s*settings?|client.*place\s*settings/i },
+  { key: 'place_settings', value: 'Mangia sets', re: /set(ting)?\s*tables?\s*with\s*place\s*settings?|mangia.*place\s*settings?/i },
 
-  // Buffet serving style
-  { key: 'serving_buffet', value: 'Y', re: /buffet\s*open|cook[\s-]?onsite\s*buffet|serving\s*buffet/i },
-  { key: 'self_serve_buffet', value: 'Y', re: /self\s*serve\s*buffet|guests?\s*(to\s*)?bring\s*plates/i },
+  // Apps
+  { key: 'apps_passed',     value: 'N', re: /third[\s-]?party.*(apps|appetizer)|client\s*provided.*(apps|appetizer)|no\s*mangia.*(apps|appetizer)/i },
+  { key: 'apps_passed',     value: 'Y', re: /passed\s*apps?/i },
+  { key: 'apps_stationary', value: 'Y', re: /stationary\s*apps?|station(ary)?\s*app\s*table|charcuterie.*mangia|gourmet\s*cheese\s*display/i },
 
-  // Place settings — explicit "no pre set place settings" is a strong, common signal
-  { key: 'setup_flatware_china', value: 'N', re: /no\s*pre\s*set\s*place\s*settings?/i },
-  { key: 'setup_flatware_china', value: 'Y', re: /set(ting)?\s*tables?\s*with\s*place\s*settings?|venue\s*setting\s*tables/i },
+  // Beverages on menu — reminder flag: fires when beverage items detected
+  { key: 'beverages_reminder', value: 'Y', re: /infused\s*water|huckleberry\s*lemonade|iced\s*tea|sweet\s*tea|lemonade|beverage\s*(dispenser|table|service)|coffee\s*service/i },
 
-  // Water — split into two genuinely distinct tasks (prefill before service vs.
-  // ongoing tableside service during the meal), since events do one, the other,
-  // or both — a single merged rule can't represent that. Each stays narrowly
-  // scoped to its own phrasing; ambiguous general "water" mentions don't fire
-  // either one — better to leave both unset than guess which was meant.
-  { key: 'prefill_water_goblets', value: 'Y', re: /\b(fill|filling|prefill|pre-fill)\b[^.]{0,20}\bwater\s*(goblet|glass)/i },
-  { key: 'tableside_water_service', value: 'Y', re: /tableside\s*water\s*service|refill(ing)?\s*water\s*(pitchers?|during)/i },
+  // Water service — scanned from both free text and food items (Vinther pattern)
+  { key: 'water_service', value: 'Full service', re: /tableside\s*water\s*service.*bringing|full\s*tableside|refill(ing)?\s*water\s*(pitchers?|during)/i },
+  { key: 'water_service', value: 'Prefill only', re: /prefill\s*(goblets?|glasses?)|prefill\s*only|\bprefill\b[^.]{0,30}water|tableside\s*water\s*service[^.]{0,30}prefill/i },
+
+  // Power and water onsite
+  { key: 'power_onsite', value: 'N', re: /no\s*(venue\s*)?power|no\s*power\s*onsite|generator\s*required|no\s*electricity/i },
+  { key: 'power_onsite', value: 'Y', re: /power\s*available|power\s*onsite|venue\s*has\s*power|electrical\s*available/i },
+  { key: 'water_onsite',  value: 'N', re: /no\s*water\s*onsite|no\s*water\s*available|client\s*hauling\s*waste/i },
+  { key: 'water_onsite',  value: 'Y', re: /water\s*(and\s*counter\s*)?avail|water\s*onsite|venue.*water|has\s*kitchen.*water/i },
 ];
 
 // Scan a worksheet's free-text sections + timeline notes for responsibility
 // signals. Returns { [key]: { value:'Y'|'N', matchedText, source } }
-function detectResponsibilityFlags(freeText, timeline) {
+function detectResponsibilityFlags(freeText, timeline, foodItems) {
   const flags = {};
   const sourcesToScan = [];
   for (const [name, text] of Object.entries(freeText || {})) {
     if (!text) continue;
-    // scan line by line so matchedText stays short and the source is precise
     text.split('\n').forEach(line => { if (line.trim()) sourcesToScan.push({ source: name, text: line.trim() }); });
   }
   (timeline || []).forEach(t => {
     if (t.note) sourcesToScan.push({ source: 'Timeline: ' + t.name, text: t.note });
   });
+  // Also scan food item names and notes — events like Vinther list water service
+  // as a menu line item ("Tableside Water Service - Bringing Water") rather than
+  // mentioning it in ops notes, so the free-text rules would miss it without this.
+  (foodItems || []).forEach(i => {
+    const text = cleanText(i.name) + (i.notes ? ' ' + cleanText(i.notes) : '');
+    if (text.trim()) sourcesToScan.push({ source: 'Menu: ' + cleanText(i.name), text: text.trim() });
+  });
 
   for (const rule of RESPONSIBILITY_RULES) {
-    if (flags[rule.key]) continue; // first matching rule for a key wins (rules ordered specific-first)
+    if (flags[rule.key]) continue;
     for (const src of sourcesToScan) {
       if (rule.re.test(src.text)) {
         flags[rule.key] = { value: rule.value, matchedText: src.text, source: src.source };
@@ -559,11 +605,11 @@ function detectResponsibilityFlags(freeText, timeline) {
   return flags;
 }
 
-function buildResponsibilityMatrix(freeText, timeline) {
-  const flags = detectResponsibilityFlags(freeText, timeline);
+function buildResponsibilityMatrix(freeText, timeline, foodItems) {
+  const flags = detectResponsibilityFlags(freeText, timeline, foodItems);
   return RESPONSIBILITY_MATRIX_TEMPLATE.map(t => ({
     ...t,
-    value: flags[t.key] ? flags[t.key].value : null, // null = unset, manual call needed
+    value: flags[t.key] ? flags[t.key].value : null,
     auto: !!flags[t.key],
     matchedText: flags[t.key] ? flags[t.key].matchedText : null,
     matchedSource: flags[t.key] ? flags[t.key].source : null,
@@ -676,6 +722,7 @@ if (typeof module !== 'undefined') {
   module.exports = {
     parseEventWorksheet, parseNowstaRoster, parseCSVRows,
     timeToMinutes, minutesToTime, cleanText, guessStyle, matchTrigger,
+    isInfoRow, INFO_PATTERNS,
     RESPONSIBILITY_MATRIX_TEMPLATE, buildResponsibilityMatrix, detectResponsibilityFlags,
     BUFFET_LAYOUT_DEFAULTS, buildBuffetLayoutSuggestion, suggestHotItemCategory,
     emptyDishLookup, extractLayoutLocations,
