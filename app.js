@@ -396,9 +396,13 @@ function renderResponsibility() {
         let activeClass = '';
         if (isActive) {
           if (opt === '—') activeClass = ' active-unset';
-          else if (opt === 'Y' || opt === 'Mangia' || opt === 'Full clear' || opt === 'Mangia sets' || opt === 'Full service' || opt === 'Prefill only') activeClass = ' active-y';
-          else if (opt === 'N' || opt === 'Third party' || opt === 'None' || opt === 'Venue sets') activeClass = ' active-n';
-          else activeClass = ' active-y'; // any other affirmative option
+          // Mangia-affirmative = green
+          else if (['Y','Mangia','Full clear','Mangia sets','Full service','Prefill only','Assist','Mangia handles','Mangia sets up'].includes(opt)) activeClass = ' active-y';
+          // Client / third party = amber (happening but not ours)
+          else if (['Client provided','Third party','Client','Client handles','Venue sets'].includes(opt)) activeClass = ' active-client';
+          // Not happening = red/muted
+          else if (['N','None'].includes(opt)) activeClass = ' active-n';
+          else activeClass = ' active-y'; // fallback
         }
         btn.className = 'resp-btn' + activeClass;
         btn.textContent = opt;
@@ -411,6 +415,19 @@ function renderResponsibility() {
         toggle.appendChild(btn);
       });
       row.appendChild(toggle);
+
+      // Per-row notes field for qualifiers (e.g. "within labor block only")
+      if (!item.isReminder) {
+        const noteInput = document.createElement('input');
+        noteInput.type = 'text';
+        noteInput.className = 'resp-row-note no-print';
+        noteInput.placeholder = 'Note…';
+        noteInput.value = item.note || '';
+        noteInput.addEventListener('blur', e => { item.note = e.target.value.trim() || null; });
+        noteInput.addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+        row.appendChild(noteInput);
+      }
+
       groupWrap.appendChild(row);
     });
     body.appendChild(groupWrap);
@@ -937,11 +954,26 @@ function renderTimelineRow(item) {
   nameInput.type = 'text';
   nameInput.className = 'tl-name' + (isInfo ? ' tl-name-info' : '');
   nameInput.value = item.name || '';
-  nameInput.addEventListener('input', e => item.name = e.target.value);
+  nameInput.addEventListener('input', e => { item.name = e.target.value; tdMain.dataset.printName = e.target.value; });
   nameRow.appendChild(nameInput);
 
-  // Style badge — don't show for Info rows (they're already visually recessed)
+  // Style badge + editable dropdown — don't show for Info rows
   if (!isInfo) {
+    const styleSel = document.createElement('select');
+    styleSel.className = 'tl-style-sel no-print';
+    const styleOptions = ['','Buffet','Cocktail Hour','Bar','Passed Apps','Action Stations','Family Style','Plated','Ceremony','Strike','General'];
+    styleOptions.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s; o.textContent = s || '—';
+      if ((item.style || 'General') === s) o.selected = true;
+      styleSel.appendChild(o);
+    });
+    styleSel.addEventListener('change', e => {
+      item.style = e.target.value || 'General';
+      renderTimeline();
+    });
+    nameRow.appendChild(styleSel);
+
     const badge = document.createElement('span');
     badge.className = 'tl-badge tl-badge-' + (item.style || 'General').toLowerCase().replace(/[^a-z]/g,'-');
     badge.textContent = item.style || 'General';
@@ -968,7 +1000,7 @@ function renderTimelineRow(item) {
   noteInput.type = 'text';
   noteInput.value = item.note || '';
   noteInput.placeholder = isInfo ? '' : 'Notes / instructions';
-  noteInput.addEventListener('input', e => item.note = e.target.value);
+  noteInput.addEventListener('input', e => { item.note = e.target.value; tdMain.dataset.printNote = e.target.value; });
   noteWrap.appendChild(noteInput);
   tdMain.appendChild(noteWrap);
 
@@ -989,7 +1021,7 @@ function renderTimelineRow(item) {
     });
     teamSel.addEventListener('change', e => {
       item.team = e.target.value;
-      // update row color class immediately without full re-render
+      tdTeam.dataset.printTeam = (item.team || '') + (item.assignedStaff && item.assignedStaff.length ? '\n' + item.assignedStaff.join(', ') : '');
       Object.values(TEAM_COLOR_CLASS).forEach(c => row.classList.remove(c));
       if (TEAM_COLOR_CLASS[item.team]) row.classList.add(TEAM_COLOR_CLASS[item.team]);
     });
@@ -1005,6 +1037,7 @@ function renderTimelineRow(item) {
     staffInput.list = 'staff-names-list';
     staffInput.addEventListener('blur', e => {
       item.assignedStaff = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+      tdTeam.dataset.printTeam = (item.team || '') + (item.assignedStaff && item.assignedStaff.length ? '\n' + item.assignedStaff.join(', ') : '');
     });
     tdTeam.appendChild(staffInput);
   }

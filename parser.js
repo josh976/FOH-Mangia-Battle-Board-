@@ -517,46 +517,54 @@ function parseEventWorksheet(csvText) {
 // ============================================================
 const RESPONSIBILITY_MATRIX_TEMPLATE = [
   // SCOPE — who's doing what (the "don't touch that" vs "that's ours" answers)
-  { group: 'Scope', key: 'bar_service',       label: 'Bar service',                options: ['Mangia','Third party','None'] },
-  { group: 'Scope', key: 'cocktail_food',     label: 'Cocktail hour food',          options: ['Mangia','Third party','None'] },
-  { group: 'Scope', key: 'dessert',           label: 'Dessert',                     options: ['Mangia','Third party','None'] },
-  { group: 'Scope', key: 'bussing',           label: 'Bussing',                     options: ['Full clear','Mangia only','None'] },
+  // "Client provided" = client themselves (distinct from "Third party" = unknown vendor)
+  { group: 'Scope', key: 'bar_service',       label: 'Bar service',                options: ['Mangia','Third party','Client provided','None'] },
+  { group: 'Scope', key: 'cocktail_food',     label: 'Cocktail hour food',          options: ['Mangia','Third party','Client provided','None'] },
+  { group: 'Scope', key: 'dessert',           label: 'Dessert',                     options: ['Mangia','Third party','Client provided','None'] },
+  { group: 'Scope', key: 'bussing',           label: 'Bussing',                     options: ['Full clear','Mangia only','Assist','None'] },
   { group: 'Scope', key: 'place_settings',    label: 'Place settings',              options: ['Mangia sets','Venue sets','None'] },
   // SERVICE — how we're running it
-  { group: 'Service', key: 'apps_passed',         label: 'Passed apps',             options: ['Y','N'] },
-  { group: 'Service', key: 'apps_stationary',     label: 'Stationary apps',         options: ['Y','N'] },
+  // "Client" = happening but not ours (client or third party doing it, staff need visibility)
+  { group: 'Service', key: 'apps_passed',         label: 'Passed apps',             options: ['Y','N','Client'] },
+  { group: 'Service', key: 'apps_stationary',     label: 'Stationary apps',         options: ['Y','N','Client'] },
   { group: 'Service', key: 'beverages_reminder',  label: 'Beverages on menu',       options: ['Y','N'], isReminder: true },
   { group: 'Service', key: 'water_service',       label: 'Tableside water',         options: ['Prefill only','Full service','None'] },
   // LOGISTICS — what we're working with
   { group: 'Logistics', key: 'mangia_disposables', label: 'Mangia disposables',     options: ['Y','N'] },
-  { group: 'Logistics', key: 'event_rentals',      label: 'Event rentals',          options: ['Y','N'] },
+  { group: 'Logistics', key: 'event_rentals',      label: 'Event rentals',          options: ['Mangia handles','Client handles','None'] },
+  { group: 'Logistics', key: 'scullery',           label: 'Scullery',               options: ['Mangia sets up','Client provided','None'] },
   { group: 'Logistics', key: 'power_onsite',       label: 'Power onsite',           options: ['Y','N'] },
   { group: 'Logistics', key: 'water_onsite',       label: 'Water onsite',           options: ['Y','N'] },
 ];
 
 const RESPONSIBILITY_RULES = [
-  // Bar — self-serve / third-party = "Third party". Mangia-run bar needs manual call.
+  // Bar — self-serve / third-party = "Third party". Client-provided bar = "Client provided"
   { key: 'bar_service', value: 'Third party', re: /self\s*serve\s*bar|third[\s-]?party\s*bar|3rd\s*party\s*bar|no\s*mangia\s*bar/i },
+  { key: 'bar_service', value: 'Client provided', re: /client\s*provided\s*bar|client\s*bar|client\s*handles?\s*bar/i },
 
-  // Cocktail hour food — client provided or third party = "Third party"
-  { key: 'cocktail_food', value: 'Third party', re: /client\s*provided.*(cocktail|apps)|third[\s-]?party.*(cocktail|apps|charcuterie)|3rd\s*party.*(cocktail|apps)/i },
+  // Cocktail hour food — client provided or third party
+  { key: 'cocktail_food', value: 'Third party', re: /third[\s-]?party.*(cocktail|apps)|3rd\s*party.*(cocktail|apps)/i },
+  { key: 'cocktail_food', value: 'Client provided', re: /client\s*provided.*(cocktail|apps)|client\s*handle[sd]?\s*(cocktail|apps|charcuterie)|client\s*apps/i },
   { key: 'cocktail_food', value: 'Mangia',       re: /mangia.*(cocktail\s*hour|passed\s*apps|stationary\s*apps)/i },
 
   // Dessert
-  { key: 'dessert', value: 'Third party', re: /third[\s-]?party.*dessert|3rd\s*party.*dessert|client.*dessert|no\s*mangia.*dessert|client\s*handled\s*cake/i },
+  { key: 'dessert', value: 'Third party', re: /third[\s-]?party.*dessert|3rd\s*party.*dessert/i },
+  { key: 'dessert', value: 'Client provided', re: /client\s*handled?\s*cake|client.*dessert|no\s*mangia.*dessert|sweet\s*frostings/i },
   { key: 'dessert', value: 'Mangia',      re: /mangia.*dessert|cut\s*cake|serve\s*dessert/i },
 
-  // Bussing
+  // Bussing — "Assist" = help within labor window, not responsible for completion
   { key: 'bussing', value: 'Full clear',   re: /full\s*bus(s)?\b|full\s*clear|clear\s*all/i },
+  { key: 'bussing', value: 'Assist',        re: /assist.*bus|bus.*assist|bus(s)?ing.*service\s*window|bus(s)?ing.*labor\s*(block|window)|help\s*bus/i },
   { key: 'bussing', value: 'Mangia only',  re: /\bbuss?\s*mangia\s*disposables|clear\s*mangia\s*disposables|mangia\s*disposables\s*only/i },
 
   // Place settings
   { key: 'place_settings', value: 'Venue sets', re: /venue\s*setting\s*tables|no\s*pre\s*set\s*place\s*settings?|client.*place\s*settings/i },
   { key: 'place_settings', value: 'Mangia sets', re: /set(ting)?\s*tables?\s*with\s*place\s*settings?|mangia.*place\s*settings?/i },
 
-  // Apps
-  { key: 'apps_passed',     value: 'N', re: /third[\s-]?party.*(apps|appetizer)|client\s*provided.*(apps|appetizer)|no\s*mangia.*(apps|appetizer)/i },
+  // Apps — "Client" = happening but not ours
+  { key: 'apps_passed',     value: 'Client', re: /third[\s-]?party.*(apps|appetizer)|client\s*provided.*(apps|appetizer)|no\s*mangia.*(apps|appetizer)|client\s*handle[sd]?\s*apps|client\s*apps/i },
   { key: 'apps_passed',     value: 'Y', re: /passed\s*apps?/i },
+  { key: 'apps_stationary', value: 'Client', re: /client\s*handle[sd]?\s*(stationary|apps|charcuterie)|third[\s-]?party.*(stationary|charcuterie)|client\s*provided.*(apps|charcuterie)/i },
   { key: 'apps_stationary', value: 'Y', re: /stationary\s*apps?|station(ary)?\s*app\s*table|charcuterie.*mangia|gourmet\s*cheese\s*display/i },
 
   // Beverages on menu — reminder flag: fires when beverage items detected
@@ -571,6 +579,14 @@ const RESPONSIBILITY_RULES = [
   { key: 'power_onsite', value: 'Y', re: /power\s*available|power\s*onsite|venue\s*has\s*power|electrical\s*available/i },
   { key: 'water_onsite',  value: 'N', re: /no\s*water\s*onsite|no\s*water\s*available|client\s*hauling\s*waste/i },
   { key: 'water_onsite',  value: 'Y', re: /water\s*(and\s*counter\s*)?avail|water\s*onsite|venue.*water|has\s*kitchen.*water/i },
+
+  // Event rentals — distinguish provider
+  { key: 'event_rentals', value: 'Client handles', re: /client\s*handle[s]?\s*rentals|client\s*provides?\s*(plates|tables|chairs)|third[\s-]?party\s*rentals?\s*[-—]\s*no\s*mangia|all\s*about\s*weddings|client\s*to\s*set\s*tables/i },
+  { key: 'event_rentals', value: 'Mangia handles', re: /mangia.*rentals?|event\s*rents|mangia.*rent/i },
+
+  // Scullery
+  { key: 'scullery', value: 'Mangia sets up', re: /mangia\s*sets?\s*up\s*(scullery|dish|washing)|mangia\s*scullery/i },
+  { key: 'scullery', value: 'Client provided', re: /client\s*scullery|venue\s*scullery|existing\s*scullery/i },
 ];
 
 // Scan a worksheet's free-text sections + timeline notes for responsibility

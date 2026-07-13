@@ -205,8 +205,25 @@
   }
   .resp-btn:hover{background:var(--paper);}
   .resp-btn.active-y{background:var(--leafy);border-color:var(--leafy);color:#fff;}
+  .resp-btn.active-client{background:var(--charcoal-soft);border-color:var(--charcoal-soft);color:#fff;}
   .resp-btn.active-n{background:var(--danger);border-color:var(--danger);color:#fff;}
   .resp-btn.active-unset{background:var(--line);border-color:var(--line-strong);color:var(--charcoal-soft);}
+
+  /* Per-row notes input in matrix */
+  .resp-row-note{
+    border:none;background:transparent;font-size:10px;font-style:italic;
+    color:var(--charcoal-soft);width:120px;padding:2px 4px;min-width:0;
+  }
+  .resp-row-note:focus{outline:none;background:var(--almost-white);border-radius:3px;}
+  .resp-row-note::placeholder{color:var(--line-strong);font-style:italic;}
+
+  /* Timeline style dropdown */
+  .tl-style-sel{
+    font-size:9.5px;padding:2px 4px;border:1px solid var(--line-strong);
+    border-radius:3px;background:var(--almost-white);color:var(--charcoal-soft);
+    cursor:pointer;
+  }
+  .tl-style-sel:focus{outline:none;border-color:var(--charcoal);}
 
   /* ---------- Buffet layout diagram (real spatial SVG) ---------- */
   .buffet-svg-wrap{width:100%;overflow-x:auto;margin-bottom:14px;}
@@ -434,99 +451,134 @@
   }
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
-  /* ---------- Print — full rebuild ----
-     Goal: compact, scannable field doc. No inputs, no buttons, no edit chrome.
-     Timeline renders as a tight table. Team colors print via print-color-adjust.
-     Target: 2 pages for a typical wedding, 3 for a complex one.
+  /* ---------- Print — full rebuild v2 ----
+     Compact field doc. Excel-style timeline table. Selected-value-only matrix.
+     Dense reference notes. No browser chrome. Target: 2 pages.
   ---------------------------------------------------------------- */
   @media print{
     *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
-    @page{margin:0.6in 0.5in;}
-    body{background:#fff;font-size:10px;line-height:1.4;}
+    @page{margin:0.5in;}
+
+    body{background:#fff !important;font-size:9.5px;line-height:1.3;}
     .app{max-width:100%;padding:0;}
 
-    /* Hide all screen-only elements */
-    .no-print, .sticky-topbar, #section-import, #section-templates,
-    #section-attachments, .tl-drag, .tl-actions, .trigger-chip,
-    .buffet-edit-list, .resp-auto-tag, .icon-btn,
-    .buffet-edit-row-wrap, .tpl-card, .upload-zone,
-    .attachment-strip, .attachment-empty-hint { display:none !important; }
+    /* Hide ALL screen-only UI */
+    .no-print,.sticky-topbar,#section-import,#section-templates,
+    #section-attachments,.tl-drag,.tl-actions,.trigger-chip,
+    .buffet-edit-list,.buffet-edit-row-wrap,.resp-auto-tag,
+    .upload-zone,.attachment-strip,.attachment-empty-hint,
+    .topbar,.add-row-btn,#btn-add-staff,#btn-add-row,
+    button{display:none !important;}
 
-    /* Show reference sections expanded */
-    .ref-body{display:block !important;}
-    .ref-section{break-inside:avoid;border-color:#ccc;margin-bottom:4px;}
-    .ref-head{padding:5px 8px;font-size:9px;}
-
-    /* Section spacing */
-    .section{margin-bottom:10px;}
-    .section-head{margin-bottom:5px;}
-    .section-eyebrow{font-size:8px;letter-spacing:1.5px;}
-    .section-eyebrow::after{background:#bbb;}
-    .card{border-color:#ccc;border-radius:3px;padding:6px 8px;}
-
-    /* ---- TIMELINE — compact table format ---- */
-    .timeline{display:table;width:100%;border-collapse:collapse;}
-    .timeline-row{
-      display:table-row;
-      border-left:3px solid transparent; /* team color */
-      break-inside:avoid;
-    }
-    /* Each timeline cell prints as a table cell */
-    .tl-time,.tl-drag,.tl-main,.tl-team,.tl-actions{display:table-cell;vertical-align:top;padding:3px 5px;}
-    .tl-time{width:62px;font-size:10px;font-weight:700;white-space:nowrap;padding-left:4px;}
-    .tl-main{width:auto;}
-    .tl-team{width:70px;font-size:9px;padding-right:4px;}
-
-    /* Hide inputs, show their values as plain text via the input's value attribute */
-    .tl-time input, .tl-name input, .tl-note input, .tl-staff-assign,
-    .tl-team select { display:none; }
-    .tl-time::before{content:attr(data-print-time);font-weight:700;font-size:10px;}
-    .tl-main::before{content:attr(data-print-name);font-weight:600;font-size:11px;display:block;}
-    .tl-main::after{content:attr(data-print-note);font-size:9.5px;color:#555;display:block;}
-    .tl-team::before{content:attr(data-print-team);font-size:9px;color:#444;}
-    .tl-badge{font-size:8px;padding:1px 4px;}
-
-    /* Team colors print */
-    .timeline-row.team-foh{border-left-color:var(--team-foh) !important;}
-    .timeline-row.team-boh{border-left-color:var(--team-boh) !important;}
-    .timeline-row.team-bar{border-left-color:var(--team-bar) !important;}
-    .timeline-row.team-mixed{border-left-color:var(--team-mixed) !important;}
-    /* INFO rows — very light */
-    .timeline-row.is-info{opacity:.5;}
-    /* Highlight stays yellow */
-    .timeline-row.is-highlighted{background:var(--highlight) !important;}
-
-    /* ---- RESPONSIBILITY MATRIX ---- */
-    #responsibility-body{break-inside:avoid;display:grid;grid-template-columns:repeat(2,1fr);gap:0 20px;}
-    .resp-group{break-inside:avoid;margin-bottom:8px;}
-    .resp-group-title{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:#666;padding-bottom:2px;border-bottom:1px solid #ccc;margin-bottom:3px;}
-    .resp-row{display:flex;align-items:center;justify-content:space-between;padding:2px 0;font-size:9.5px;}
-    .resp-toggle{display:flex;gap:2px;}
-    .resp-btn{border:1px solid #aaa;background:#fff;color:#aaa;font-size:8px;padding:1px 5px;border-radius:2px;}
-    .resp-btn.active-y{background:#000 !important;border-color:#000 !important;color:#fff !important;}
-    .resp-btn.active-n{background:#fff !important;border:1.5px solid #000 !important;color:#000 !important;text-decoration:line-through;}
-    /* Show option labels (Mangia/Third party etc.) truncated */
-    .resp-btn{min-width:0;max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-
-    /* ---- BUFFET DIAGRAM ---- */
-    #buffet-body{break-inside:avoid;}
-    .buf-table,.buf-cold-item,.buf-plate{stroke:#555 !important;}
-    .buffet-svg-wrap{margin-bottom:4px;}
-
-    /* ---- MENU ---- */
-    #section-menu .card{display:grid;grid-template-columns:repeat(2,1fr);gap:0 16px;}
-    .menu-group{break-inside:avoid;}
-    .menu-group-title{font-size:8px;letter-spacing:1px;}
-    .menu-item{font-size:9.5px;}
-    .menu-item-note{font-size:8.5px;}
-
-    /* ---- TOPBAR print header ---- */
-    /* Print a minimal brand header in place of the sticky topbar */
+    /* Print brand header */
     .app::before{
       content:"Mangia Catering Co. — FOH Battle Board";
-      display:block;font-size:11px;font-weight:700;letter-spacing:1px;
-      border-bottom:1.5px solid #000;padding-bottom:4px;margin-bottom:8px;
+      display:block;font-size:10px;font-weight:700;letter-spacing:1px;
+      border-bottom:1.5px solid #000;padding-bottom:3px;margin-bottom:6px;
     }
+
+    /* Sections — compact spacing */
+    .section{margin-bottom:8px;}
+    .section-head{margin-bottom:3px;}
+    .section-eyebrow{font-size:7.5px;letter-spacing:1.5px;}
+    .section-eyebrow::after{background:#bbb;}
+    .card{border-color:#ccc;border-radius:2px;padding:5px 8px;}
+
+    /* ---- META — strip input chrome, show values as text ---- */
+    .meta-grid{grid-template-columns:repeat(4,1fr);gap:4px 12px;}
+    .meta-field input,.meta-field textarea{
+      font-size:8.5px;border:none !important;background:transparent !important;
+      padding:0;color:#000;font-weight:600;
+    }
+    .field-label{font-size:7px;}
+
+    /* Strip chrome from all textareas/inputs in print */
+    textarea{
+      border:none !important;background:transparent !important;
+      font-size:8.5px;color:#000;resize:none;
+    }
+
+    /* ---- TIMELINE — compact table, one line per row ---- */
+    .timeline{display:table;width:100%;border-collapse:collapse;}
+    .timeline-row{
+      display:table-row;break-inside:avoid;
+      border-left:3px solid transparent;
+    }
+    .timeline-row>div{display:table-cell;vertical-align:top;padding:1.5px 4px;}
+
+    /* Hide ALL interactive children — only show data-attr content */
+    .timeline-row .tl-name-row,
+    .timeline-row .tl-badge,
+    .timeline-row .tl-note,
+    .timeline-row .tl-style-sel{display:none !important;}
+
+    .tl-time{width:52px;font-weight:700;font-size:8.5px;white-space:nowrap;}
+    .tl-time::before{content:attr(data-print-time);}
+    .tl-main{width:auto;}
+    .tl-main::before{content:attr(data-print-name);font-weight:600;font-size:9px;display:block;}
+    .tl-main::after{content:attr(data-print-note);font-size:8px;color:#555;display:block;}
+    .tl-team{width:55px;font-size:8px;color:#444;}
+    .tl-team::before{content:attr(data-print-team);}
+
+    /* Team colors */
+    .timeline-row.team-foh{border-left-color:#3B6D11 !important;}
+    .timeline-row.team-boh{border-left-color:#C9621E !important;}
+    .timeline-row.team-bar{border-left-color:#2E6B9E !important;}
+    .timeline-row.team-mixed{border-left-color:#C99A2E !important;}
+    .timeline-row.team-all{border-left-color:#888 !important;}
+    .timeline-row.is-info{opacity:.5;}
+    .timeline-row.is-highlighted{background:#FFE066 !important;}
+
+    /* ---- RESPONSIBILITY MATRIX — 3-col, selected value only ---- */
+    #responsibility-body{break-inside:avoid;display:grid;grid-template-columns:repeat(3,1fr);gap:0 16px;}
+    .resp-group{break-inside:avoid;margin-bottom:4px;}
+    .resp-group-title{font-size:7px;letter-spacing:1px;text-transform:uppercase;color:#666;padding-bottom:2px;border-bottom:1px solid #ccc;margin-bottom:2px;}
+    .resp-row{display:flex;align-items:center;justify-content:space-between;padding:1px 0;font-size:8.5px;border-bottom:1px dotted #eee;}
+    .resp-label{font-size:8px;}
+
+    /* Hide ALL buttons, show only the active one */
+    .resp-toggle{gap:0;}
+    .resp-btn{display:none !important;}
+    .resp-btn.active-y{display:inline-block !important;background:#3B6D11 !important;border-color:#3B6D11 !important;color:#fff !important;font-size:7px;padding:1px 4px;border-radius:2px;max-width:none;overflow:visible;}
+    .resp-btn.active-client{display:inline-block !important;background:#666 !important;border-color:#666 !important;color:#fff !important;font-size:7px;padding:1px 4px;border-radius:2px;max-width:none;overflow:visible;}
+    .resp-btn.active-n{display:inline-block !important;background:#eee !important;border-color:#ccc !important;color:#999 !important;font-size:7px;padding:1px 4px;border-radius:2px;max-width:none;overflow:visible;}
+    .resp-btn.active-unset{display:none !important;}
+
+    /* Per-row notes — show as plain text */
+    .resp-row-note{
+      display:inline-block !important;border:none !important;background:transparent !important;
+      font-size:7px;color:#666;width:auto;max-width:100px;
+    }
+
+    /* Reminder rows */
+    .resp-reminder,.resp-reminder-inactive{padding:1px 0;font-size:8px;border-bottom:1px dotted #eee;}
+    .resp-reminder-flag{font-size:10px;}
+
+    /* ---- BUFFET — diagram only, no edit list ---- */
+    #buffet-body{break-inside:avoid;}
+    .buffet-svg-wrap{margin-bottom:4px;}
+    .buf-table,.buf-cold-item,.buf-plate{stroke:#555 !important;}
+    .buffet-note{font-size:8px;margin-top:4px;padding-top:4px;}
+
+    /* ---- MENU — 2-col compact ---- */
+    #section-menu .card{display:grid;grid-template-columns:repeat(2,1fr);gap:0 12px;}
+    .menu-group{break-inside:avoid;}
+    .menu-group-title{font-size:7px;letter-spacing:1px;}
+    .menu-item{font-size:8.5px;padding:1px 0;}
+    .menu-item-name{font-size:8.5px;}
+    .menu-item-note{font-size:7.5px;}
+
+    /* ---- ROSTER — compact ---- */
+    .roster-table th{font-size:7px;padding:2px 4px;}
+    .roster-table td{font-size:8px;padding:1.5px 4px;}
+    .team-badge{font-size:7px;padding:1px 4px;}
+
+    /* ---- REFERENCE NOTES — dense text ---- */
+    .ref-body{display:block !important;font-size:8px;line-height:1.25;color:#333;white-space:pre-wrap;}
+    .ref-section{break-inside:avoid;border-color:#ccc;margin-bottom:4px;}
+    .ref-head{padding:3px 6px;font-size:8px;font-weight:700;}
+
+    /* Kill browser chrome */
     a[href]:after{content:none !important;}
   }
 
