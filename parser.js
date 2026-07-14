@@ -576,7 +576,7 @@ const RESPONSIBILITY_RULES = [
 
   // Power and water onsite
   { key: 'power_onsite', value: 'N', re: /no\s*(venue\s*)?power|no\s*power\s*onsite|generator\s*required|no\s*electricity/i },
-  { key: 'power_onsite', value: 'Y', re: /power\s*available|power\s*onsite|venue\s*has\s*power|electrical\s*available/i },
+  { key: 'power_onsite', value: 'Y', re: /power\s*(is\s*)?available|venue\s*has\s*power|electrical\s*available|generator\s*not\s*required/i },
   { key: 'water_onsite',  value: 'N', re: /no\s*water\s*onsite|no\s*water\s*available|client\s*hauling\s*waste/i },
   { key: 'water_onsite',  value: 'Y', re: /water\s*(and\s*counter\s*)?avail|water\s*onsite|venue.*water|has\s*kitchen.*water/i },
 

@@ -1075,7 +1075,7 @@ function renderTimelineRow(item) {
 
 // ---- insert a trigger template's steps as real, editable timeline rows ----
 function insertTriggerTemplate(anchorItem) {
-  const tpl = TRIGGER_TEMPLATES[anchorItem.trigger];
+  const _mergedTpl = { ...TRIGGER_TEMPLATES, ...(STATE.customTemplates || {}) }; const tpl = _mergedTpl[anchorItem.trigger];
   if (!tpl) return;
   const anchorMinutes = anchorItem.timeMinutes;
   const anchorIdx = STATE.timeline.findIndex(x => x.id === anchorItem.id);
@@ -1398,7 +1398,7 @@ function renderTemplateLibrary() {
   section.style.display = '';
   body.innerHTML = '';
 
-  const templates = STATE.customTemplates || TRIGGER_TEMPLATES;
+  const templates = { ...TRIGGER_TEMPLATES, ...(STATE.customTemplates || {}) };
   Object.entries(templates).forEach(([key, tpl]) => {
     const card = document.createElement('div');
     card.className = 'tpl-card';
